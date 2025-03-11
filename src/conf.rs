@@ -12,6 +12,7 @@ pub enum LogLevel {
 #[derive(Parser, Debug)]
 pub struct Args {
     #[arg(short, long, value_name = "FILE")]
+    #[arg(default_value = "in.rs")]
     pub input: PathBuf,
 
     #[arg(short, long, value_name = "FILE")]
@@ -25,6 +26,10 @@ pub struct Args {
     #[arg(short, long, value_name = "LEVEL")]
     #[arg(default_value = "info")]
     pub log_level: String,
+
+    #[arg(long, value_name = "LOOP")]
+    #[arg(default_value = "false")]
+    pub _loop: bool,
 }
 
 impl Args {
@@ -39,9 +44,7 @@ impl Args {
     }
 }
 
-pub static ARGS: LazyLock<Args> = LazyLock::new(
-    || Args::parse(),
-);
+pub static ARGS: LazyLock<Args> = LazyLock::new(Args::parse);
 
 pub fn args() -> &'static Args {
     &ARGS
@@ -82,4 +85,3 @@ macro_rules! error {
         }
     }
 }
-

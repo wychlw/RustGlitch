@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-pub mod fuzz;
+pub mod fuzzbase;
 pub mod synfuzz;
 // pub mod rustcfuzz;
 pub mod strategy;
+pub mod rand_choose;
