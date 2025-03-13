@@ -1,71 +1,111 @@
-#![feature(rustc_private)]
 #![feature(macro_metavar_expr)]
 #![feature(macro_metavar_expr_concat)]
 #![feature(concat_idents)]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
-#![feature(box_into_inner)]
-#![feature(trace_macros)]
+// #![allow(incomplete_features)]
+// #![feature(generic_const_exprs)]
+// #![feature(box_into_inner)]
+// #![feature(trace_macros)]
 // trace_macros!(true);
+
+use std::{
+    env::temp_dir,
+    error::Error,
+    fs::create_dir_all,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+};
+
+use clap::Parser;
+use conf::{Args, set_log_leven};
+use fuzz::{
+    fuzzbase::{FResult, Fuzzer},
+    splicer::SplicerFuzzer,
+};
+use util::gen_alnum;
 
 mod conf;
 mod fuzz;
-mod strategy;
+mod ice_process;
 mod util;
 
-use std::error::Error;
+static EXTRA_ARGS: [&str; 8] = [
+    "-C",
+    "opt-level=3",
+    "--edition",
+    "2024",
+    "--emit=mir",
+    "-Zno-codegen",
+    "-Zmir-opt-level=4",
+    "-Zvalidate-mir",
+];
 
-use clap::Parser;
-use conf::Args;
-use fuzz::fuzzbase::FResult;
-// #[allow(unused_imports)]
-// use fuzz::rustcfuzz::RustCFuzzer;
-#[allow(unused_imports)]
-use fuzz::synfuzz::SynFuzzer;
-
-fn main() -> Result<(), Box<dyn Error>> {
-    let extra_compile_args = vec![
-        "-C".to_string(),
-        "opt-level=3".to_string(),
-        "--edition".to_string(),
-        "2024".to_string(),
-        "--emit=mir".to_string(),
-        "-Zmir-opt-level=4".to_string(),
-        "-Zvalidate-mir".to_string(),
-    ];
-
-    let args = Args::parse();
-
-    let mut fuzzer = SynFuzzer::new(&args.input, &extra_compile_args)?;
-    // let mut fuzzer = RustCFuzzer::new(&args.input, &extra_compile_args)?;
-    // fuzzer.replace()?;
-
-    let mut idx = 0;
+fn run<T: Fuzzer>(
+    args: &Args,
+    fuzzer: Arc<RwLock<Box<dyn Fuzzer>>>,
+    idx: Arc<AtomicUsize>,
+) -> Result<(), Box<dyn Error>> {
+    let tmp_source = temp_dir().join(format!("nfuzz_{}.rs", gen_alnum(4)));
+    let tmp_bin = temp_dir().join(format!("nfuzz_{}.rs", gen_alnum(4)));
     loop {
-        idx += 1;
-        fuzzer.generate()?;
-        fuzzer.dump(&args.output)?;
-
-        let compile_res = fuzzer.compile(&args.binary, &extra_compile_args)?;
-        println!("{} - CRES: {}", idx, compile_res);
-
-        if let FResult::CompileSuccess(_) = compile_res {
-            let run_res = fuzzer.run(&args.binary)?;
-            println!("Run return with {}", run_res.status);
-            println!("StdOut:");
-            print!("{}\n\n", String::from_utf8(run_res.stdout)?);
-            println!("<StdOut end>");
-            println!("StdErr:");
-            print!("{}\n\n", String::from_utf8(run_res.stderr)?);
-            println!("<StdErr end>");
-        }
-
-        if !args._loop {
+        let cidx = idx.fetch_add(1, Ordering::SeqCst);
+        if !args._infloop && cidx >= args._loopcnt {
             break;
         }
 
-        if !matches!(compile_res, FResult::CompileError(..)) {
-            break;
+        let code = {
+            let mut lock = fuzzer.write().map_err(|e| e.to_string())?;
+            lock.generate()?
+        };
+        let compile_res = T::compile(&code, &tmp_source, &tmp_bin, &EXTRA_ARGS)?;
+        println!("{cidx} - CRES: {compile_res}");
+        if args.force_dump || matches!(compile_res, FResult::InternalCompileError(..)) {
+            let p = args.output.join(format!("gen_{cidx}.rs"));
+            println!(
+                "\t\tDump to: {}",
+                p.as_os_str().to_str().unwrap_or_default()
+            );
+            T::dump(&code, &p)?;
+        }
+    }
+    Ok(())
+}
+
+type FuzzerType = SplicerFuzzer;
+fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+    let args = Box::leak(args.into());
+    set_log_leven(&args.log_level);
+
+    debug!("{:#?}", args);
+
+    let fuzzer = FuzzerType::new(&args.input)?;
+    let fuzzer = Arc::new(RwLock::new(fuzzer));
+
+    create_dir_all(&args.output)?;
+    info!("Begin generating...");
+
+    let idx: Arc<AtomicUsize> = Arc::new(0.into());
+
+    if args.nthread <= 1 {
+        run::<FuzzerType>(args, fuzzer.clone(), idx.clone())?;
+    } else {
+        let mut handles = Vec::default();
+        for _ in 0..args.nthread {
+            let args = &*args;
+            let fuzzer = fuzzer.clone();
+            let idx = idx.clone();
+            let handle = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+                run::<FuzzerType>(args, fuzzer, idx).map_err(|e| e.to_string().into())
+            });
+            handles.push(handle);
+        }
+        while !handles.is_empty() {
+            let handle = handles.pop().unwrap();
+            let res = handle.join().unwrap();
+            res.map_err(|e| e as Box<dyn Error>)?;
         }
     }
 
