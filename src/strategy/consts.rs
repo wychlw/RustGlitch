@@ -11,6 +11,7 @@ pub const RANGE_START_B: f64 = 0.2;
 pub const RANGE_END_B: f64 = 0.8;
 pub const LIFETIME_B: f64 = 0.1;
 pub const LIFETIME_R: Range<usize> = 1..8;
+pub const LET_ELSE_B: f64 = 0.1;
 pub const FN_CONST_B: f64 = 0.3;
 pub const FN_ASYNC_B: f64 = 0.3;
 pub const FN_UNSAFE_B: f64 = 0.1;

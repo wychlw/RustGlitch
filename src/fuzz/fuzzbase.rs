@@ -1,14 +1,19 @@
 use std::{
-    env::temp_dir, error::Error, fmt::Display, path::Path, process::{Command, Output, Stdio}, sync::LazyLock
+    env::temp_dir,
+    error::Error,
+    fmt::Display,
+    fs,
+    path::Path,
+    process::{Command, Output, Stdio},
 };
 
-use crate::util::gen_alnum;
+use crate::{debug, fuzz::feature_list::FEATURES};
 
 #[derive(Debug)]
 pub enum FResult {
-    CompileSuccess(String),
-    CompileError(String),
-    InternalCompileError(String),
+    CompileSuccess(Output),
+    CompileError(Output),
+    InternalCompileError(Output),
     RunSuccess,
     RunError,
 }
@@ -23,36 +28,51 @@ impl Display for FResult {
     }
 }
 
-pub trait Fuzzer {
-    fn replace(&mut self) -> Result<(), Box<dyn Error>>;
-    fn generate(&mut self) -> Result<(), Box<dyn Error>>;
-    fn compile(&mut self, output: &Path, extra_args: &[String]) -> Result<FResult, Box<dyn Error>> {
+pub trait Fuzzer: Send + Sync {
+    fn generate(&mut self) -> Result<Vec<u8>, Box<dyn Error>>;
+    fn compile(
+        &self,
+        code: &[u8],
+        output_source: &Path,
+        output_bin: &Path,
+        extra_args: &[&str],
+    ) -> Result<FResult, Box<dyn Error>> {
         {
-            static TMP_FILE: LazyLock<String> = LazyLock::new(|| format!("fuzzmid_{}.rs", gen_alnum(4)));
-            let tmp_file = temp_dir().join(TMP_FILE.as_str());
-            self.dump(&tmp_file)?;
+            let tmp_file = temp_dir().join(output_source);
+            self.dump(code, &tmp_file)?;
             let args = [
                 tmp_file.to_str().unwrap().to_string(),
                 "-o".to_string(),
-                output.to_str().unwrap().to_string(),
+                output_bin.to_str().unwrap().to_string(),
             ];
-            let args: Vec<String> = extra_args.iter().chain(args.iter()).cloned().collect();
+            let args: Vec<String> = args
+                .into_iter()
+                .chain(extra_args.into_iter().map(|s| s.to_string()))
+                .collect();
+            let extra_args: Vec<String> = FEATURES
+                .iter()
+                .map(|s| format!("-Zcrate-attr=feature({s})"))
+                .collect();
+            let args: Vec<String> = args.into_iter().chain(extra_args.into_iter()).collect();
             let mut cmd = Command::new("rustc");
             cmd.args(args);
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
             let status = cmd.output()?;
+            debug!("Code: {}", status.status.code().unwrap());
             if status.status.success() {
-                return Ok(FResult::CompileSuccess(String::from_utf8(status.stdout)?));
+                return Ok(FResult::CompileSuccess(status));
             }
-            let status_stderr = String::from_utf8(status.stderr)?;
             if status.status.code().unwrap() == 1 {
-                return Ok(FResult::CompileError(status_stderr));
+                return Ok(FResult::CompileError(status));
             }
-            Ok(FResult::InternalCompileError(status_stderr))
+            Ok(FResult::InternalCompileError(status))
         }
     }
-    fn dump(&mut self, output: &Path) -> Result<(), Box<dyn Error>>;
+    fn dump(&self, code: &[u8], output: &Path) -> Result<(), Box<dyn Error>> {
+        fs::write(output, code)?;
+        Ok(())
+    }
     fn run(&mut self, bin_path: &Path) -> Result<Output, Box<dyn Error>> {
         let mut cmd = Command::new(bin_path);
         let status = cmd.output()?;

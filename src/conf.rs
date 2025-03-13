@@ -1,59 +1,75 @@
-use clap::{Parser, arg};
-use std::{path::PathBuf, sync::LazyLock};
+use clap::{arg, Parser};
+use std::{
+    path::PathBuf, sync::{LazyLock, RwLock}
+};
 
-#[derive(PartialEq, PartialOrd)]
+#[derive(PartialEq, PartialOrd, Clone, Copy, Debug)]
 pub enum LogLevel {
     Error = 0,
     Warn = 1,
     Info = 2,
     Debug = 3,
 }
-
 #[derive(Parser, Debug)]
 pub struct Args {
-    #[arg(short, long, value_name = "FILE")]
-    #[arg(default_value = "in.rs")]
-    pub input: PathBuf,
+    #[arg(short, long, value_name = "DIR")]
+    #[arg(default_value = "in")]
+    pub input: Vec<PathBuf>,
 
-    #[arg(short, long, value_name = "FILE")]
-    #[arg(default_value = "out.rs")]
+    #[arg(short, long, value_name = "DIR")]
+    #[arg(default_value = "out")]
     pub output: PathBuf,
 
-    #[arg(short, long, value_name = "FILE")]
-    #[arg(default_value = "out.bin")]
-    pub binary: PathBuf,
+    #[arg(short='j', value_name = "THREAD")]
+    #[arg(default_value = "1")]
+    pub nthread: usize,
 
-    #[arg(short, long, value_name = "LEVEL")]
+    // #[arg(short, long, value_name = "FILE")]
+    // #[arg(default_value = "out.bin")]
+    // pub binary: PathBuf,
+
+    #[arg(long="log", value_name = "LEVEL")]
     #[arg(default_value = "info")]
     pub log_level: String,
 
-    #[arg(long, value_name = "LOOP")]
+    #[arg(short, long, value_name = "LOOP")]
+    #[arg(default_value = "1")]
+    pub _loopcnt: usize,
+    
+    #[arg(long="inf", value_name = "LOOP", conflicts_with = "_loopcnt")]
     #[arg(default_value = "false")]
-    pub _loop: bool,
+    pub _infloop: bool,
+
+    #[arg(long, value_name = "FORCE_DUMP")]
+    #[arg(default_value = "false")]
+    pub force_dump: bool,
+
+
 }
 
-impl Args {
-    pub fn get_log_level(&self) -> LogLevel {
-        match self.log_level.as_str() {
-            "error" => LogLevel::Error,
-            "warn" => LogLevel::Warn,
-            "info" => LogLevel::Info,
-            "debug" => LogLevel::Debug,
-            _ => LogLevel::Info,
-        }
-    }
+static LOG_LEVEL: LazyLock<RwLock<LogLevel>> = LazyLock::new(|| RwLock::new(LogLevel::Info));
+
+pub fn get_log_level() -> LogLevel {
+    let l = LOG_LEVEL.read().unwrap();
+    *l
 }
 
-pub static ARGS: LazyLock<Args> = LazyLock::new(Args::parse);
-
-pub fn args() -> &'static Args {
-    &ARGS
+pub fn set_log_leven(s: &str) {
+    let l = match s {
+        "error" => LogLevel::Error,
+        "warn" => LogLevel::Warn,
+        "info" => LogLevel::Info,
+        "debug" => LogLevel::Debug,
+        _ => panic!("No such level")
+    };
+    let mut _l = LOG_LEVEL.write().unwrap();
+    *_l = l;
 }
 
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)*) => {
-        if $crate::conf::args().get_log_level() >= $crate::conf::LogLevel::Debug {
+        if $crate::conf::get_log_level() >= $crate::conf::LogLevel::Debug {
             eprintln!($($arg)*);
         }
     }
@@ -62,7 +78,7 @@ macro_rules! debug {
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
-        if $crate::conf::args().get_log_level() >= $crate::conf::LogLevel::Info {
+        if $crate::conf::get_log_level() >= $crate::conf::LogLevel::Info {
             eprintln!($($arg)*);
         }
     }
@@ -71,7 +87,7 @@ macro_rules! info {
 #[macro_export]
 macro_rules! warn {
     ($($arg:tt)*) => {
-        if $crate::conf::args().get_log_level() >= $crate::conf::LogLevel::Warn {
+        if $crate::conf::get_log_level() >= $crate::conf::LogLevel::Warn {
             eprintln!($($arg)*);
         }
     }
@@ -80,7 +96,7 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
-        if $crate::conf::args().get_log_level() >= $crate::conf::LogLevel::Error {
+        if $crate::conf::get_log_level() >= $crate::conf::LogLevel::Error {
             eprintln!($($arg)*);
         }
     }
