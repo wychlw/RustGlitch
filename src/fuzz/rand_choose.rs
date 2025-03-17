@@ -129,11 +129,13 @@ where
     }
 }
 
+type WeightGen<P, R> = fn(&P) -> R;
+
 pub struct WeightedRandDynamic<T, WeightType = usize, WeightParam = ()>
 where
     WeightType: Copy + Default,
 {
-    items: Vec<(T, fn(&WeightParam) -> WeightType)>,
+    items: Vec<(T, WeightGen<WeightParam, WeightType>)>,
     rng: RNG,
 }
 
@@ -150,7 +152,7 @@ where
         + Default
         + Debug,
 {
-    pub fn new(items: Option<Vec<(T, fn(&WeightParam) -> WeightType)>>, rng: Option<RNG>) -> Self {
+    pub fn new(items: Option<Vec<(T, WeightGen<WeightParam, WeightType>)>>, rng: Option<RNG>) -> Self {
         let rng = match rng {
             Some(r) => r,
             None => {
@@ -166,10 +168,11 @@ where
     }
 
     pub fn rand(&mut self, param: &WeightParam) -> Result<(&T, usize), Box<dyn Error>> {
-        let weights: Vec<_> = self.items.iter().map(|x| x.1(&param)).collect();
+        let weights: Vec<_> = self.items.iter().map(|x| x.1(param)).collect();
         let sum = weights.iter().fold(WeightType::default(), |a, b| a + *b);
         let r = WeightType::default()..sum;
         let mut rnd = self.rng.range(r);
+        #[allow(clippy::needless_range_loop)] // Clippy is wrong
         for idx in 0..self.items.len() {
             let (item, _) = &self.items[idx];
             if rnd < weights[idx] {

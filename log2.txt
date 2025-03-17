@@ -1,0 +1,74 @@
+   Compiling nfuzz v0.1.0 (/home/lw/Work/rust/nfuzz2)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.94s
+     Running `target/debug/nfuzz -i tmp/ -o tmp/out2 -l 10 --log info -j 1 --force-dump`
+Registered strategy: ExprLitStrategy
+Registered strategy: ExprTryBlockStrategy
+Registered strategy: ExprUnsafeStrategy
+Registered strategy: ExprReturnStrategy
+Registered strategy: ExprForLoopStrategy
+Registered strategy: PatOrStrategy
+Registered strategy: StmtLocalStrategy
+Registered strategy: ExprBinaryStrategy
+Registered strategy: PatRestStrategy
+Registered strategy: ExprBreakStrategy
+Registered strategy: ExprTryStrategy
+Registered strategy: ItemFnStrategy
+Registered strategy: ExprWhileStrategy
+Registered strategy: TypeNeverStrategy
+Registered strategy: PatWildStrategy
+Registered strategy: TypeReferenceStrategy
+Registered strategy: TypePtrStrategy
+Registered strategy: ExprLoopStrategy
+Registered strategy: ExprBlockStrategy
+Registered strategy: TypeParenStrategy
+Registered strategy: TypePathStrategy
+Registered strategy: TypePathGenericStrategy
+Registered strategy: ExprYieldStrategy
+Registered strategy: ExprConstStrategy
+Registered strategy: ExprAwaitStrategy
+Registered strategy: ExprIfStrategy
+Registered strategy: ExprParenStrategy
+Registered strategy: ExprContinueStrategy
+Registered strategy: PatParenStrategy
+Registered strategy: PatRangeStrategy
+Registered strategy: TypeGroupStrategy
+Registered strategy: StmtItemStrategy
+Registered strategy: PatTypeStrategy
+Registered strategy: ExprAsyncStrategy
+Registered strategy: TypeArrayStrategy
+Registered strategy: ExprRangeStrategy
+Registered strategy: PatReferenceStrategy
+Registered strategy: StmtExprStrategy
+Registered strategy: TypeInferStrategy
+Registered strategy: TypeSliceStrategy
+Registered strategy: PatIdentStrategy
+Registered strategy: PatConstStrategy
+Registered strategy: ExprUnaryStrategy
+Registered strategy: StmtStrategy
+Registered strategy: PatStrategy
+Registered strategy: BlockStrategy
+Registered strategy: ExprStrategy
+Registered strategy: TypeStrategy
+Registered strategy: ItemStrategy
+Begin generating...
+0 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_0.rs
+1 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_1.rs
+2 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_2.rs
+3 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_3.rs
+4 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_4.rs
+5 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_5.rs
+6 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_6.rs
+7 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_7.rs
+8 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_8.rs
+9 - CRES: Compile Error :|
+		Dump to: tmp/out2/gen_9.rs
+Work thread exited!

@@ -1,7 +1,6 @@
-Stmt::Local
-
 Other Lit
 Other type to Type::Path
+GenericArgument
 
     pub enum Expr {
         /// A slice literal expression: `[a, b, c, d]`.
@@ -29,12 +28,6 @@ Other type to Type::Path
         /// of expressions and is related to `None`-delimited spans in a
         /// `TokenStream`.
         Group(ExprGroup),
-
-        /// A square bracketed indexing expression: `vector[2]`.
-        Index(ExprIndex),
-
-        /// The inferred value of a const generic argument, denoted `_`.
-        Infer(ExprInfer),
 
         /// A `let` guard: `let Some(x) = opt`.
         Let(ExprLet),
@@ -95,9 +88,6 @@ Other type to Type::Path
         /// A static item: `static BIKE: Shed = Shed(42)`.
         Static(ItemStatic),
 
-        /// A struct definition: `struct Foo<A> { x: A }`.
-        Struct(ItemStruct),
-
         /// A trait definition: `pub trait Iterator { ... }`.
         Trait(ItemTrait),
 
@@ -118,11 +108,6 @@ Other type to Type::Path
         /// A path like `std::slice::Iter`, optionally qualified with a
         /// self-type as in `<Vec<T> as SomeTrait>::Associated`.
         Path(TypePath),
-        /// A pattern that binds a new variable: `ref mut binding @ SUBPATTERN`.
-        Ident(PatIdent),
-
-        /// A literal pattern: `0`.
-        Lit(PatLit),
 
         /// A path pattern like `Color::Red`, optionally qualified with a
         /// self-type.

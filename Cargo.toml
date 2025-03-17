@@ -7,8 +7,10 @@ edition = "2024"
 # channel = "nightly"
 
 [dependencies]
+async-openai = "0.28.0"
 clap = { version = "4.5.28", features = ["derive"] }
 ctor = "0.4.1"
+dyn-clone = "1.0.19"
 inventory = "0.3.19"
 ouroboros = "0.18.5"
 proc-macro2 = "1.0.94"
@@ -16,7 +18,8 @@ quote = "1.0.38"
 rand = "0.9.0"
 rand_chacha = "0.9.0"
 rayon-core = "1.12.1"
-# rustc_errors = { path = "/home/lw/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/rustc-src/rust/compiler/rustc_errors" }
+regex = "1.11.1"
+signal-hook = "0.3.17"
 syn = { version = "2.0.98", features = [
     "full",
     "visit-mut",
@@ -26,5 +29,4 @@ syn = { version = "2.0.98", features = [
 tree-sitter = "0.20.10"
 tree-sitter-rust = "0.20.3"
 tree-splicer = "0.6.0"
-tree-splicer-rust = "0.6.0"
 walkdir = "2.5.0"

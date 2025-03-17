@@ -1,18 +1,19 @@
 #![feature(macro_metavar_expr)]
 #![feature(macro_metavar_expr_concat)]
 #![feature(concat_idents)]
+#![feature(box_into_inner)]
 // #![allow(incomplete_features)]
 // #![feature(generic_const_exprs)]
-// #![feature(box_into_inner)]
 // #![feature(trace_macros)]
 // trace_macros!(true);
 
 use std::{
     env::temp_dir,
     error::Error,
-    fs::create_dir_all,
+    fs::{OpenOptions, create_dir_all},
+    io::Write,
     sync::{
-        Arc, RwLock,
+        Arc, Barrier, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
@@ -20,9 +21,11 @@ use std::{
 
 use clap::Parser;
 use conf::{Args, set_log_leven};
-use fuzz::{
-    fuzzbase::{FResult, Fuzzer},
-    splicer::SplicerFuzzer,
+use fuzz::fuzzbase::{FResult, Fuzzer};
+#[allow(unused_imports)]
+use strategies::{splicer::SplicerFuzzer, syn::SynFuzzer};
+use ice_process::{
+    DummyFilter, ICEFilter, panicfunc::PanicFuncFilter, querystack::QueryStackFilter,
 };
 use util::gen_alnum;
 
@@ -30,6 +33,10 @@ mod conf;
 mod fuzz;
 mod ice_process;
 mod util;
+
+mod strategies;
+
+const THREAD_SET_CNT: usize = 3;
 
 static EXTRA_ARGS: [&str; 8] = [
     "-C",
@@ -44,11 +51,12 @@ static EXTRA_ARGS: [&str; 8] = [
 
 fn run<T: Fuzzer>(
     args: &Args,
-    fuzzer: Arc<RwLock<Box<dyn Fuzzer>>>,
+    fuzzer: Arc<Mutex<Box<dyn Fuzzer>>>,
     idx: Arc<AtomicUsize>,
+    filters: Vec<Arc<Mutex<Box<dyn ICEFilter>>>>,
 ) -> Result<(), Box<dyn Error>> {
     let tmp_source = temp_dir().join(format!("nfuzz_{}.rs", gen_alnum(4)));
-    let tmp_bin = temp_dir().join(format!("nfuzz_{}.rs", gen_alnum(4)));
+    let tmp_bin = temp_dir().join(format!("nfuzz_{}.bin", gen_alnum(4)));
     loop {
         let cidx = idx.fetch_add(1, Ordering::SeqCst);
         if !args._infloop && cidx >= args._loopcnt {
@@ -56,24 +64,63 @@ fn run<T: Fuzzer>(
         }
 
         let code = {
-            let mut lock = fuzzer.write().map_err(|e| e.to_string())?;
+            let mut lock = fuzzer.lock().map_err(|e| e.to_string())?;
             lock.generate()?
         };
         let compile_res = T::compile(&code, &tmp_source, &tmp_bin, &EXTRA_ARGS)?;
-        println!("{cidx} - CRES: {compile_res}");
-        if args.force_dump || matches!(compile_res, FResult::InternalCompileError(..)) {
+        println!("{cidx} - CRES: {}", compile_res.1);
+
+        if args.force_dump {
             let p = args.output.join(format!("gen_{cidx}.rs"));
             println!(
                 "\t\tDump to: {}",
                 p.as_os_str().to_str().unwrap_or_default()
             );
             T::dump(&code, &p)?;
+            let mut addon_f = OpenOptions::new().append(true).open(&p)?;
+            addon_f.write_fmt(format_args!(
+                "\n\n// Compile Args: {}",
+                compile_res.0.join(" ")
+            ))?;
+            continue;
         }
+
+        if !matches!(compile_res.1, FResult::InternalCompileError(..)) {
+            continue;
+        }
+
+        let mut filter_pass = 0;
+        for filter in &filters {
+            let mut lock = filter.lock().map_err(|s| s.to_string())?;
+            if lock.filter(&compile_res.1) {
+                filter_pass += 1;
+                let _ = lock.add(&compile_res.1);
+            }
+        }
+
+        if filter_pass == 0 {
+            println!("\t\tICE already exists, filtering out");
+            continue;
+        }
+
+        let p = args.output.join(format!("gen_{cidx}.rs"));
+        println!(
+            "\t\tDump to: {}",
+            p.as_os_str().to_str().unwrap_or_default()
+        );
+        T::dump(&code, &p)?;
+        let mut addon_f = OpenOptions::new().append(true).open(&p)?;
+        addon_f.write_fmt(format_args!(
+            "\n\n// Compile Args: {}",
+            compile_res.0.join(" ")
+        ))?;
     }
+    info!("Work thread exited!");
     Ok(())
 }
 
-type FuzzerType = SplicerFuzzer;
+// type FuzzerType = SplicerFuzzer;
+type FuzzerType = SynFuzzer;
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let args = Box::leak(args.into());
@@ -81,8 +128,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     debug!("{:#?}", args);
 
-    let fuzzer = FuzzerType::new(&args.input)?;
-    let fuzzer = Arc::new(RwLock::new(fuzzer));
+    let fuzzer = FuzzerType::new(&args)?;
+
+    let filters: Vec<_> = vec![
+        QueryStackFilter::new(),
+        PanicFuncFilter::new(),
+        DummyFilter::new(),
+    ]
+    .into_iter()
+    .collect();
 
     create_dir_all(&args.output)?;
     info!("Begin generating...");
@@ -90,20 +144,48 @@ fn main() -> Result<(), Box<dyn Error>> {
     let idx: Arc<AtomicUsize> = Arc::new(0.into());
 
     if args.nthread <= 1 {
-        run::<FuzzerType>(args, fuzzer.clone(), idx.clone())?;
+        let fuzzer = Arc::new(Mutex::new(fuzzer));
+        let filters: Vec<_> = filters
+            .iter()
+            .map(|x| Arc::new(Mutex::new(dyn_clone::clone_box(&**x))))
+            .collect();
+        run::<FuzzerType>(args, fuzzer, idx.clone(), filters)?;
     } else {
         let mut handles = Vec::default();
-        for _ in 0..args.nthread {
-            let args = &*args;
-            let fuzzer = fuzzer.clone();
-            let idx = idx.clone();
-            let handle = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
-                run::<FuzzerType>(args, fuzzer, idx).map_err(|e| e.to_string().into())
-            });
-            handles.push(handle);
+        let barrier = Arc::new(Barrier::new(args.nthread));
+        let mut i = 0;
+
+        let args = &*args;
+        info!(
+            "Due to multi-thread needs to copy some data, the spawn procedure could be as slow as the init process :("
+        );
+        info!("Please wait patiently~ :P");
+        while i < args.nthread {
+            let fuzzer = dyn_clone::clone_box(&*fuzzer);
+            let fuzzer = Arc::new(Mutex::new(fuzzer));
+            let filters: Vec<_> = filters
+                .iter()
+                .map(|x| Arc::new(Mutex::new(dyn_clone::clone_box(&**x))))
+                .collect();
+            for _ in 0..THREAD_SET_CNT {
+                if i >= args.nthread {
+                    break;
+                }
+                let fuzzer = fuzzer.clone();
+                let idx = idx.clone();
+                let filters = filters.clone();
+                let barrier = barrier.clone();
+                let handle = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+                    barrier.wait();
+                    run::<FuzzerType>(args, fuzzer, idx, filters).map_err(|e| e.to_string().into())
+                });
+                handles.push(handle);
+                info!("Thread {i} spawned~");
+                i += 1;
+            }
         }
-        while !handles.is_empty() {
-            let handle = handles.pop().unwrap();
+        info!("Begin to execute w~");
+        while let Some(handle) = handles.pop() {
             let res = handle.join().unwrap();
             res.map_err(|e| e as Box<dyn Error>)?;
         }

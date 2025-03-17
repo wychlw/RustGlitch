@@ -15,9 +15,16 @@
             },
             "args": [
                 "-i",
-                "tmp/s.rs",
+                "tmp/",
+                "-o",
+                "tmp/debug",
                 "-l",
-                "debug"
+                "20",
+                "--log",
+                "info",
+                "-j",
+                "2",
+                "--force-dump"
             ]
         }
 

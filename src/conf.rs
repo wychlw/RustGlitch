@@ -43,8 +43,6 @@ pub struct Args {
     #[arg(long, value_name = "FORCE_DUMP")]
     #[arg(default_value = "false")]
     pub force_dump: bool,
-
-
 }
 
 static LOG_LEVEL: LazyLock<RwLock<LogLevel>> = LazyLock::new(|| RwLock::new(LogLevel::Info));
@@ -70,7 +68,7 @@ pub fn set_log_leven(s: &str) {
 macro_rules! debug {
     ($($arg:tt)*) => {
         if $crate::conf::get_log_level() >= $crate::conf::LogLevel::Debug {
-            eprintln!($($arg)*);
+            println!($($arg)*);
         }
     }
 }
@@ -79,7 +77,7 @@ macro_rules! debug {
 macro_rules! info {
     ($($arg:tt)*) => {
         if $crate::conf::get_log_level() >= $crate::conf::LogLevel::Info {
-            eprintln!($($arg)*);
+            println!($($arg)*);
         }
     }
 }
