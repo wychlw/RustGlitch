@@ -46,7 +46,19 @@ pub trait Fuzzer: Send + Sync + DynClone {
     where
         Self: Sized,
     {
-        fuzzer_compile::<Self>(code, output_source, output_bin, extra_args)
+        Self::compile_with_features(code, output_source, output_bin, extra_args, &FEATURES)
+    }
+    fn compile_with_features(
+        code: &[u8],
+        output_source: &Path,
+        output_bin: &Path,
+        extra_args: &[&str],
+        features: &[&str],
+    ) -> Result<(Vec<String>, FResult), Box<dyn Error>>
+    where
+        Self: Sized,
+    {
+        fuzzer_compile::<Self>(code, output_source, output_bin, extra_args, features)
     }
     // fn run(&mut self, bin_path: &Path) -> Result<Output, Box<dyn Error>> {
     //     let mut cmd = Command::new(bin_path);
@@ -68,6 +80,7 @@ pub fn fuzzer_compile<T: Fuzzer>(
     output_source: &Path,
     output_bin: &Path,
     extra_args: &[&str],
+    features: &[&str],
 ) -> Result<(Vec<String>, FResult), Box<dyn Error>> {
     // (Args, Result)
     {
@@ -82,7 +95,7 @@ pub fn fuzzer_compile<T: Fuzzer>(
             .into_iter()
             .chain(extra_args.iter().map(|s| s.to_string()))
             .collect();
-        let extra_args: Vec<String> = FEATURES
+        let extra_args: Vec<String> = features
             .iter()
             .map(|s| format!("-Zcrate-attr=feature({s})"))
             .collect();

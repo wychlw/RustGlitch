@@ -22,11 +22,12 @@ use std::{
 use clap::Parser;
 use conf::{Args, set_log_leven};
 use fuzz::fuzzbase::{FResult, Fuzzer};
+use ice_process::{
+    DummyFilter, ICEFilter, flagbisect::filter_flags, panicfunc::PanicFuncFilter,
+    querystack::QueryStackFilter,
+};
 #[allow(unused_imports)]
 use strategies::{splicer::SplicerFuzzer, syn::SynFuzzer};
-use ice_process::{
-    DummyFilter, ICEFilter, panicfunc::PanicFuncFilter, querystack::QueryStackFilter,
-};
 use util::gen_alnum;
 
 mod conf;
@@ -77,10 +78,13 @@ fn run<T: Fuzzer>(
                 p.as_os_str().to_str().unwrap_or_default()
             );
             T::dump(&code, &p)?;
+            let flag = compile_res.0;
+            let minimized_flag =
+                filter_flags::<T>(flag, &code, &tmp_source, &tmp_bin, &EXTRA_ARGS)?;
             let mut addon_f = OpenOptions::new().append(true).open(&p)?;
             addon_f.write_fmt(format_args!(
                 "\n\n// Compile Args: {}",
-                compile_res.0.join(" ")
+                minimized_flag.join(" ")
             ))?;
             continue;
         }

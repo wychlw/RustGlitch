@@ -4,6 +4,7 @@ use crate::fuzz::fuzzbase::FResult;
 
 pub mod querystack;
 pub mod panicfunc;
+pub mod flagbisect;
 
 #[allow(unused)]
 pub trait ICEFilter: Send + Sync + DynClone {
