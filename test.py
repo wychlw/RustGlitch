@@ -5,7 +5,9 @@ import random
 from tqdm import tqdm
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
-from torch.utils.data import TensorDataset, DataLoader, Dataset
+from transformers import TrainingArguments, Trainer
+from peft import LoraConfig, get_peft_model, TaskType
+from torch.utils.data import DataLoader, Dataset
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,11 +25,15 @@ def Args():
     parser.add_argument('-s', '--save', type=str,
                         help='save path', default='./model_out')
     parser.add_argument('--layers', type=int, default=15)
+    parser.add_argument('--trainer', action='store_true',
+                        help='use huggingface trainer', default=True)
+    parser.add_argument('--lora', action='store_true',
+                        help='enable lora trainer', default=False)
     args = parser.parse_args()
     return args
 
 
-class CodeGeexDataset(Dataset):
+class MyDataset(Dataset):
     def __collect_file_one_dir(self, input_dir):
         codes = []
         for root, _, files in os.walk(input_dir):
@@ -45,18 +51,27 @@ class CodeGeexDataset(Dataset):
         return codes
 
     def __gen_tokens(self, tokenizer, code_prefix="", code_middle="", code_suffix=""):
+        # ChatGLM
+        #         prefix = \
+        #             f"""
+        # [gMASK]<sop>
+        # <|system|>
+        # You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features.
+        # You shall only generate code and nothing else.
+        # <|user|>
+        # ###PATH:ice_gen.rs
+        # ###LANGUAGE:Rust
+        # ###MODE:BLOCK
+        # <|code_suffix|>{code_suffix}<|code_prefix|>{code_prefix}<|code_middle|><|assistant|>
+        # """
+
+        # Qwen
         prefix = \
             f"""
-[gMASK]<sop>
-<|system|>
 You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features.
-You shall only generate code and nothing else. 
-<|user|>
-###PATH:ice_gen.rs
-###LANGUAGE:Rust
-###MODE:BLOCK
-<|code_suffix|>{code_suffix}<|code_prefix|>{code_prefix}<|code_middle|><|assistant|>
+<|fim_prefix|>{code_prefix}<|fim_suffix|>{code_suffix}<|fim_middle|>
 """
+
         prefix_tokens = tokenizer.encode(
             text=prefix, padding=True, truncation=True, add_special_tokens=True
         )
@@ -138,18 +153,7 @@ def save_model(model, args):
     logger.info("model saved to %s", args.save)
 
 
-def train(model, tokenizer, dataset, device, args):
-
-    for name, param in model.named_parameters():
-        try:
-            idx = int(name.split('.')[3])
-        except:
-            continue
-        if idx < args.layers:
-            param.requires_grad = False
-        else:
-            param.requires_grad = True
-
+def self_train(model, tokenizer, dataset, device, args):
     model = model.to(device)
     model.train()
 
@@ -182,6 +186,40 @@ def train(model, tokenizer, dataset, device, args):
 
         logger.info("epoch %d, loss: %f", epoch, losses)
 
+    save_model(model, args)
+
+
+def trainer_train(model, tokenizer, dataset, device, args):
+    model = model.to(device)
+    training_args = TrainingArguments(
+        output_dir=args.save,
+        per_device_train_batch_size=args.batch_size,
+        num_train_epochs=args.epochs,
+        learning_rate=args.learning_rate,
+        logging_dir='./logs',
+        logging_steps=100,
+        save_strategy="epoch",
+        save_total_limit=2,
+        load_best_model_at_end=True,
+        push_to_hub=False
+    )
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        data_collator=DataCollator(tokenizer),
+        train_dataset=dataset,
+        tokenizer=tokenizer,
+    )
+    trainer.train()
+    save_model(model, args)
+
+
+def train(model, tokenizer, dataset, device, args):
+    if args.trainer:
+        trainer_train(model, tokenizer, dataset, device, args)
+    else:
+        self_train(model, tokenizer, dataset, device, args)
+
 
 def main(args):
     if torch.cuda.is_available():
@@ -190,18 +228,45 @@ def main(args):
         # device = 'npu'
     else:
         device = 'cpu'
+    logger.info("device: %s", device)
     model_path = args.model
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, trust_remote_code=True)
+        model_path, trust_remote_code=True
+    )
     tokenizer = AutoTokenizer.from_pretrained(
-        model_path, trust_remote_code=True)
+        model_path,
+        pad_token='<|endoftext|>',
+        eos_token='<|endoftext|>',
+        padding_side="right",
+        trust_remote_code=True
+    )
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["<|im_end|>", "<|im_start|>"]})
     logger.info("model loaded from %s", model_path)
 
-    logger.info("device: %s", device)
+    if args.lora:
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=8,
+            lora_alpha=32,
+            lora_dropout=0.1
+        )
+        model = get_peft_model(model, lora_config)
+    if not args.lora:
+        for name, param in model.named_parameters():
+            try:
+                idx = int(name.split('.')[3])
+            except:
+                continue
+            if idx < args.layers:
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+    logger.info("model: \n%s", repr(model))
 
     logger.info("loading codes from %s", args.input)
-    dataset = CodeGeexDataset(args.input, tokenizer, args)
+    dataset = MyDataset(args.input, tokenizer, args)
     logger.info("train data loaded")
     logger.info("train data size: %d", len(dataset))
 
