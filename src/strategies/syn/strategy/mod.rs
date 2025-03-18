@@ -17,6 +17,7 @@ use syn::fold::Fold;
 #[allow(unused)]
 pub trait FuzzerStrategyImpl<Node> {
     fn do_fuzz(&self, _v: &mut dyn Fold, node: Node) -> Result<Node, Box<dyn Error>> {
+        
         Ok(node)
     }
     fn do_gen(&mut self) -> Result<Node, Box<dyn Error>>;

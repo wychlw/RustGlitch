@@ -9,7 +9,7 @@ use std::{
 
 use dyn_clone::DynClone;
 
-use crate::{debug, fuzz::feature_list::FEATURES};
+use crate::{conf::Args, debug, fuzz::feature_list::FEATURES};
 
 #[derive(Debug)]
 pub enum FResult {
@@ -69,9 +69,14 @@ pub trait Fuzzer: Send + Sync + DynClone {
 
 #[derive(Default, Clone)]
 pub struct DummyFuzzer {}
+impl DummyFuzzer {
+    pub fn new(_: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
+        Ok(Box::new(Self {}))
+    }
+}
 impl Fuzzer for DummyFuzzer {
     fn generate(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
-        Ok(Vec::new())
+        Ok(Vec::from(b"fn main() {break rust}"))
     }
 }
 

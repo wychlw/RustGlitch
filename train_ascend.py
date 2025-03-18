@@ -1,13 +1,18 @@
 import os
 import logging
 import random
+import json
 
+import torch_npu.npu
 from tqdm import tqdm
 import torch
+import torch_npu
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers import TrainingArguments, Trainer
 from peft import LoraConfig, get_peft_model, TaskType
 from torch.utils.data import DataLoader, Dataset
+from torch_npu.npu import amp
+from torch_npu.contrib import transfer_to_npu
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,9 +29,9 @@ def Args():
                         help='model path', default='./model')
     parser.add_argument('-s', '--save', type=str,
                         help='save path', default='./model_out')
-    parser.add_argument('--layers', type=int, default=15)
+    parser.add_argument('--layers', type=int, default=10)
     parser.add_argument('--trainer', action='store_true',
-                        help='use huggingface trainer', default=True)
+                        help='use huggingface trainer', default=False)
     parser.add_argument('--lora', action='store_true',
                         help='enable lora trainer', default=False)
     args = parser.parse_args()
@@ -97,6 +102,11 @@ You are a rust professor aimed in finding bugs in rust compilers. You need to gi
             labels = [-100] * prefix_len + tokens[prefix_len:]
             datas.append((tokens, labels))
 
+            if len(code) <= 5:
+                continue
+            if len(code) > 1024:
+                continue # OOM...
+
             code_split_point = random.randrange(1, len(code))
 
             (tokens, prefix_len) = self.__gen_tokens(
@@ -104,6 +114,18 @@ You are a rust professor aimed in finding bugs in rust compilers. You need to gi
                 code_prefix=code[:code_split_point],
                 code_middle=code[code_split_point:],
                 code_suffix=""
+            )
+            labels = [-100] * prefix_len + tokens[prefix_len:]
+            datas.append((tokens, labels))
+
+            code_split_front = random.randrange(1, len(code) // 2)
+            code_split_back = random.randrange(len(code) // 2, len(code))
+
+            (tokens, prefix_len) = self.__gen_tokens(
+                tokenizer,
+                code_prefix=code[:code_split_front],
+                code_middle=code[code_split_front:code_split_back],
+                code_suffix=code[:code_split_back]
             )
             labels = [-100] * prefix_len + tokens[prefix_len:]
             datas.append((tokens, labels))
@@ -166,30 +188,47 @@ def self_train(model, tokenizer, dataset, device, args):
         name='linear', optimizer=optimizer, num_warmup_steps=0,
         num_training_steps=len(loader) * args.epochs
     )
+    scaler = amp.GradScaler()
 
+    loss_history = []
     for epoch in tqdm(range(args.epochs)):
         model.train()
 
         losses = 0.
         optimizer.zero_grad()
         for batch in tqdm(loader):
+            optimizer.zero_grad()
             inputs = batch
             inputs = {k: v.to(device) for k, v in inputs.items()}
-            outputs = model(**inputs)
-            loss = outputs.loss
-            losses += loss.item()
-            loss.backward()
 
-            optimizer.step()
+            with amp.autocast():
+                outputs = model(**inputs)
+                loss = outputs.loss
+            l = loss
+            l = scaler.scale(loss)
+            losses += l.item()
+            l.backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            # loss.backward()
+            # optimizer.step()
             lr_scheduler.step()
-            optimizer.zero_grad()
 
-        logger.info("epoch %d, loss: %f", epoch, losses)
+        logger.info("epoch %d, loss: %f", epoch, losses / len(loader))  
+        loss_history.append(losses / len(loader))
 
+    with open('train_log.json', 'w', encoding='utf-8') as f:
+        json.dump(loss_history, f)
     save_model(model, args)
 
 
 def trainer_train(model, tokenizer, dataset, device, args):
+    train_size = int(len(dataset) * 0.85)
+    eval_size = len(dataset) - train_size
+    train_dataset, eval_dataset = torch.utils.data.random_split(
+        dataset, [train_size, eval_size]
+    )
     model = model.to(device)
     training_args = TrainingArguments(
         output_dir=args.save,
@@ -197,9 +236,12 @@ def trainer_train(model, tokenizer, dataset, device, args):
         num_train_epochs=args.epochs,
         learning_rate=args.learning_rate,
         logging_dir='./logs',
-        logging_steps=100,
+        logging_strategy="epoch",
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=5,
+        eval_strategy="epoch",
+        fp16=True,
+        # gradient_checkpointing=True,
         load_best_model_at_end=True,
         push_to_hub=False
     )
@@ -207,10 +249,13 @@ def trainer_train(model, tokenizer, dataset, device, args):
         model=model,
         args=training_args,
         data_collator=DataCollator(tokenizer),
-        train_dataset=dataset,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         tokenizer=tokenizer,
     )
     trainer.train()
+    with open('train_log.json', 'w', encoding='utf-8') as f:
+        json.dump(trainer.state.log_history, f)
     save_model(model, args)
 
 
@@ -222,17 +267,20 @@ def train(model, tokenizer, dataset, device, args):
 
 
 def main(args):
-    if torch.cuda.is_available():
-        device = 'cuda'
-    # elif torch.npu.is_available():
-        # device = 'npu'
+    # if torch.cuda.is_available():
+        # device = 'cuda'
+    if torch_npu.npu.is_available():
+        device = 'npu'
     else:
         device = 'cpu'
     logger.info("device: %s", device)
     model_path = args.model
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, trust_remote_code=True
+        model_path, 
+        # torch_dtype="auto",
+        device_map="auto",
+        trust_remote_code=True
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_path,

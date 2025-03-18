@@ -30,3 +30,7 @@ tree-sitter = "0.20.10"
 tree-sitter-rust = "0.20.3"
 tree-splicer = "0.6.0"
 walkdir = "2.5.0"
+# llama_cpp_rs = "0.3.0"
+# llama_cpp_rs = {path = "../rust-llama.cpp"}
+llama-cpp-2 = "0.1.102"
+encoding_rs = "0.8.35"

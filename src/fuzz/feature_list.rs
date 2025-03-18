@@ -1,4 +1,4 @@
-pub static FEATURES: [&str; 438] = [
+pub static FEATURES: [&str; 440] = [
     "associated_const_equality",
     "associated_type_defaults",
     "async_fn_track_caller",
@@ -437,9 +437,11 @@ pub static FEATURES: [&str; 438] = [
     "wrapping_next_power_of_two",
     "write_all_vectored",
     "yeet_desugar_details",
+    "min_generic_const_args",
+    "inherent_associated_types",
 ];
 
-pub static INCOMPLETE_FEATURE: [&str; 22] = [
+pub static INCOMPLETE_FEATURE: [&str; 20] = [
     "async_fn_in_dyn_trait",
     "const_closures",
     "deref_patterns",
@@ -449,9 +451,7 @@ pub static INCOMPLETE_FEATURE: [&str; 22] = [
     "generic_const_exprs",
     "generic_const_items",
     "guard_patterns",
-    "inherent_associated_types",
     "lazy_type_alias",
-    "min_generic_const_args",
     "mut_ref",
     "never_patterns",
     "non_lifetime_binders",

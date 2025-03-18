@@ -21,11 +21,15 @@ use std::{
 
 use clap::Parser;
 use conf::{Args, set_log_leven};
-use fuzz::fuzzbase::{FResult, Fuzzer};
+use fuzz::{
+    feature_list::FEATURES,
+    fuzzbase::{DummyFuzzer, FResult, Fuzzer},
+};
 use ice_process::{
     DummyFilter, ICEFilter, flagbisect::filter_flags, panicfunc::PanicFuncFilter,
     querystack::QueryStackFilter,
 };
+// use strategies::models::ModelFuzzer;
 #[allow(unused_imports)]
 use strategies::{splicer::SplicerFuzzer, syn::SynFuzzer};
 use util::gen_alnum;
@@ -39,7 +43,7 @@ mod strategies;
 
 const THREAD_SET_CNT: usize = 3;
 
-static EXTRA_ARGS: [&str; 8] = [
+static EXTRA_ARGS: [&str; 9] = [
     "-C",
     "opt-level=3",
     "--edition",
@@ -48,6 +52,7 @@ static EXTRA_ARGS: [&str; 8] = [
     "-Zno-codegen",
     "-Zmir-opt-level=4",
     "-Zvalidate-mir",
+    "--crate-type=lib",
 ];
 
 fn run<T: Fuzzer>(
@@ -78,13 +83,14 @@ fn run<T: Fuzzer>(
                 p.as_os_str().to_str().unwrap_or_default()
             );
             T::dump(&code, &p)?;
-            let flag = compile_res.0;
-            let minimized_flag =
-                filter_flags::<T>(flag, &code, &tmp_source, &tmp_bin, &EXTRA_ARGS)?;
             let mut addon_f = OpenOptions::new().append(true).open(&p)?;
             addon_f.write_fmt(format_args!(
                 "\n\n// Compile Args: {}",
-                minimized_flag.join(" ")
+                EXTRA_ARGS.join(" ")
+            ))?;
+            addon_f.write_fmt(format_args!(
+                "\n\n// Compile Flags: {}",
+                FEATURES.join(" ")
             ))?;
             continue;
         }
@@ -96,7 +102,7 @@ fn run<T: Fuzzer>(
         let mut filter_pass = 0;
         for filter in &filters {
             let mut lock = filter.lock().map_err(|s| s.to_string())?;
-            if lock.filter(&compile_res.1) {
+            if !lock.filter(&compile_res.1) {
                 filter_pass += 1;
                 let _ = lock.add(&compile_res.1);
             }
@@ -114,17 +120,29 @@ fn run<T: Fuzzer>(
         );
         T::dump(&code, &p)?;
         let mut addon_f = OpenOptions::new().append(true).open(&p)?;
+        let flags = FEATURES.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let minimized_flag = filter_flags::<T>(flags, &code, &tmp_source, &tmp_bin, &EXTRA_ARGS)?;
         addon_f.write_fmt(format_args!(
             "\n\n// Compile Args: {}",
-            compile_res.0.join(" ")
+            EXTRA_ARGS.join(" ")
+        ))?;
+        addon_f.write_fmt(format_args!(
+            "\n\n// Original Flags: {}",
+            FEATURES.join(" ")
+        ))?;
+        addon_f.write_fmt(format_args!(
+            "\n\n// Compile Flags: {}",
+            minimized_flag.join(" ")
         ))?;
     }
     info!("Work thread exited!");
     Ok(())
 }
 
+// type FuzzerType = DummyFuzzer;
 // type FuzzerType = SplicerFuzzer;
 type FuzzerType = SynFuzzer;
+// type FuzzerType = ModelFuzzer;
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let args = Box::leak(args.into());
@@ -164,13 +182,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Due to multi-thread needs to copy some data, the spawn procedure could be as slow as the init process :("
         );
         info!("Please wait patiently~ :P");
+
+        let filters: Vec<_> = filters
+            .iter()
+            .map(|x| Arc::new(Mutex::new(dyn_clone::clone_box(&**x))))
+            .collect();
         while i < args.nthread {
             let fuzzer = dyn_clone::clone_box(&*fuzzer);
             let fuzzer = Arc::new(Mutex::new(fuzzer));
-            let filters: Vec<_> = filters
-                .iter()
-                .map(|x| Arc::new(Mutex::new(dyn_clone::clone_box(&**x))))
-                .collect();
+
             for _ in 0..THREAD_SET_CNT {
                 if i >= args.nthread {
                     break;

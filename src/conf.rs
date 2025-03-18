@@ -24,9 +24,18 @@ pub struct Args {
     #[arg(default_value = "1")]
     pub nthread: usize,
 
-    // #[arg(short, long, value_name = "FILE")]
-    // #[arg(default_value = "out.bin")]
-    // pub binary: PathBuf,
+    #[arg(short, long, value_name = "FILE")]
+    #[arg(default_value = "model.gguf")]
+    pub model: PathBuf,
+
+    #[arg(long)]
+    #[arg(default_value = "false")]
+    pub gpu: bool,
+
+    #[arg(long="mj", value_name = "THREAD")]
+    #[arg(default_value = "10")]
+    pub model_nthread: usize,
+
 
     #[arg(long="log", value_name = "LEVEL")]
     #[arg(default_value = "info")]

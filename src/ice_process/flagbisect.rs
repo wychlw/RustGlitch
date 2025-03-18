@@ -22,7 +22,7 @@ where
     T: Clone + Eq + Debug,
     F: Fn(&[T]) -> bool,
 {
-    println!("{} / {:#?}", set.len(), set);
+    // println!("{} / {:#?}", set.len(), set);
     if set.len() <= 1 {
         return set;
     }
@@ -71,7 +71,7 @@ pub fn filter_flags<T: Fuzzer>(
         matches!(res, FResult::InternalCompileError(..))
     };
     let set = quick_xplain(flags, &f, vec![]);
-    let set = bruce_filter(set, &f);
+    let set = bruce_filter(set, &f); // Optional, just in-case
     Ok(set)
 }
 
