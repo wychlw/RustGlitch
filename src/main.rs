@@ -13,8 +13,8 @@ use std::{
     fs::{OpenOptions, create_dir_all},
     io::Write,
     sync::{
-        Arc, Barrier, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier, LazyLock, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
 };
@@ -28,6 +28,10 @@ use fuzz::{
 use ice_process::{
     DummyFilter, ICEFilter, flagbisect::filter_flags, panicfunc::PanicFuncFilter,
     querystack::QueryStackFilter,
+};
+use signal_hook::{
+    consts::{SIGINT, SIGTERM},
+    iterator::Signals,
 };
 // use strategies::models::ModelFuzzer;
 #[allow(unused_imports)]
@@ -55,6 +59,8 @@ static EXTRA_ARGS: [&str; 9] = [
     "--crate-type=lib",
 ];
 
+static STOP: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
+
 fn run<T: Fuzzer>(
     args: &Args,
     fuzzer: Arc<Mutex<Box<dyn Fuzzer>>>,
@@ -66,6 +72,9 @@ fn run<T: Fuzzer>(
     loop {
         let cidx = idx.fetch_add(1, Ordering::SeqCst);
         if !args._infloop && cidx >= args._loopcnt {
+            break;
+        }
+        if STOP.load(Ordering::Relaxed) {
             break;
         }
 
@@ -88,10 +97,7 @@ fn run<T: Fuzzer>(
                 "\n\n// Compile Args: {}",
                 EXTRA_ARGS.join(" ")
             ))?;
-            addon_f.write_fmt(format_args!(
-                "\n\n// Compile Flags: {}",
-                FEATURES.join(" ")
-            ))?;
+            addon_f.write_fmt(format_args!("\n\n// Compile Flags: {}", FEATURES.join(" ")))?;
             continue;
         }
 
@@ -139,20 +145,34 @@ fn run<T: Fuzzer>(
     Ok(())
 }
 
-// type FuzzerType = DummyFuzzer;
+fn check_stop(mut signals: Signals) {
+    for sig in signals.forever() {
+        match sig {
+            SIGINT | SIGTERM => {
+                info!("Received signal: {sig}");
+                STOP.store(true, Ordering::Relaxed);
+                break;
+            }
+            _ => unreachable!(),
+        }
+    }
+    info!("Signal thread exited!");
+}
+
+type FuzzerType = DummyFuzzer;
 // type FuzzerType = SplicerFuzzer;
-type FuzzerType = SynFuzzer;
+// type FuzzerType = SynFuzzer;
 // type FuzzerType = ModelFuzzer;
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let args = Box::leak(args.into());
-    set_log_leven(&args.log_level);
+    set_log_level(&args.log_level);
 
     debug!("{:#?}", args);
 
     let fuzzer = FuzzerType::new(&args)?;
 
-    let filters: Vec<_> = vec![
+    let mut filters: Vec<_> = vec![
         QueryStackFilter::new(),
         PanicFuncFilter::new(),
         DummyFilter::new(),
@@ -220,6 +240,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         info!("Begin to execute w~");
+        if args._infloop {
+            info!("Infinite loop mode, press Ctrl+C to stop");
+            let sig = Signals::new(&[SIGINT, SIGTERM])?;
+            thread::spawn(move || {
+                check_stop(sig);
+            })
+            .join()
+            .unwrap();
+            // Sleep for a while to let the threads finish
+            thread::sleep(std::time::Duration::from_secs(1));
+        }
         while let Some(handle) = handles.pop() {
             let res = handle.join().unwrap();
             res.map_err(|e| e as Box<dyn Error>)?;

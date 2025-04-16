@@ -1,13 +1,10 @@
 use std::{
-    env::temp_dir,
-    error::Error,
-    fmt::Display,
-    fs,
-    path::Path,
-    process::{Command, Output, Stdio},
+    env::temp_dir, error::Error, ffi::OsStr, fmt::Display, fs, path::Path, process::{Command, Output, Stdio}
 };
 
 use dyn_clone::DynClone;
+use regex::Regex;
+use walkdir::WalkDir;
 
 use crate::{conf::Args, debug, fuzz::feature_list::FEATURES};
 
@@ -68,16 +65,52 @@ pub trait Fuzzer: Send + Sync + DynClone {
 }
 
 #[derive(Default, Clone)]
-pub struct DummyFuzzer {}
+pub struct DummyFuzzer {
+    pub codes: Vec<Vec<u8>>,
+    pub idx: usize,
+}
 impl DummyFuzzer {
-    pub fn new(_: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
-        Ok(Box::new(Self {}))
+    pub fn new(conf: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
+        let dirs = &conf.input;
+        let mut codes = vec![];
+        for dir in dirs {
+            for f in WalkDir::new(dir) {
+                let entry = f?;
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                if entry.path().extension() != Some(OsStr::new("rs")) {
+                    continue;
+                }
+                let code = fs::read(entry.path())?;
+                codes.push(code);
+            }
+        }
+        let res = Self { codes, idx: 0 };
+        let res = Box::new(res);
+        Ok(res)
     }
 }
 impl Fuzzer for DummyFuzzer {
     fn generate(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
-        Ok(Vec::from(b"fn main() {break rust}"))
+        if self.idx >= self.codes.len() {
+            self.idx = 0;
+        }
+        let code = self.codes[self.idx].clone();
+        self.idx += 1;
+        Ok(code)
     }
+}
+
+pub fn code_mask_feature(code: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    const RE: &str = r"^(#!\[feature\([a-zA-Z0-9_,]*\)\])$";
+    const RE_REP: &str = r"\\$1";
+    let re = Regex::new(RE)?;
+    let res = re
+        .replace_all(str::from_utf8(code)?, RE_REP)
+        .as_bytes()
+        .to_owned();
+    Ok(res)
 }
 
 pub fn fuzzer_compile<T: Fuzzer>(
