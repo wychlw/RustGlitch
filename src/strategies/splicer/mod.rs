@@ -10,7 +10,7 @@ use tree_splicer::{
 };
 use walkdir::WalkDir;
 
-use crate::{conf::Args, info, util::glob_next};
+use crate::{conf::Args, fuzz::fuzzbase::code_mask_feature, info, util::glob_next};
 
 use crate::fuzz::{
     feature_list::{FORBID_FEATURE, INCOMPLETE_FEATURE},
@@ -201,7 +201,8 @@ impl Fuzzer for SplicerFuzzer {
                 }
             }
 
-            return Ok(code);
+            let res = code_mask_feature(&code)?;
+            return Ok(res);
         }
         let def_res = b"fn main(){}";
         Ok(def_res.to_vec())
