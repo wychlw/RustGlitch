@@ -20,6 +20,10 @@ pub struct Args {
     #[arg(default_value = "out")]
     pub output: PathBuf,
 
+    #[arg(short, long, value_name = "DIR")]
+    #[arg(default_value = ".")]
+    pub datas: PathBuf,
+
     #[arg(short='j', value_name = "THREAD")]
     #[arg(default_value = "1")]
     pub nthread: usize,
@@ -61,7 +65,7 @@ pub fn get_log_level() -> LogLevel {
     *l
 }
 
-pub fn set_log_leven(s: &str) {
+pub fn set_log_level(s: &str) {
     let l = match s {
         "error" => LogLevel::Error,
         "warn" => LogLevel::Warn,

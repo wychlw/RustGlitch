@@ -1,6 +1,8 @@
-use std::{collections::HashSet, error::Error};
+use std::{collections::HashSet, error::Error, fs::{self, read_to_string}};
 
-use crate::fuzz::fuzzbase::FResult;
+use crate::{conf::Args, debug, fuzz::fuzzbase::FResult};
+
+use serde_json;
 
 use super::ICEFilter;
 
@@ -20,9 +22,11 @@ fn filter_panic_file(msg: &[u8]) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
     Ok(msg.last().map(|v| v.to_owned()))
 }
 
+
+type FilterData = HashSet<Vec<u8>>;
 #[derive(Clone)]
 pub struct PanicFuncFilter {
-    existed: HashSet<Vec<u8>>,
+    existed: FilterData,
 }
 impl PanicFuncFilter {
     #[allow(clippy::new_ret_no_self)]
@@ -59,6 +63,23 @@ impl ICEFilter for PanicFuncFilter {
     }
     fn reset(&mut self) {
         self.existed.clear();
+    }
+    fn import(&mut self, args: &Args) -> Result<(), Box<dyn Error>> {
+        let p = args.datas.join("func_filters.json");
+        if !p.exists() {
+            return Ok(());
+        }
+        let f = read_to_string(p)?;
+        let datas: FilterData = serde_json::from_str(&f)?;
+        debug!("PanicFunc importing panic filters: {}", datas.len());
+        self.existed.extend(datas.into_iter());
+        Ok(())
+    }
+    fn export(&self, args: &Args) -> Result<(), Box<dyn Error>> {
+        let datas = serde_json::to_string(&self.existed)?;
+        let p = args.datas.join("func_filters.json");
+        fs::write(p, datas)?;
+        Ok(())
     }
 }
 

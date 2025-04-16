@@ -20,7 +20,7 @@ use std::{
 };
 
 use clap::Parser;
-use conf::{Args, set_log_leven};
+use conf::{Args, set_log_level};
 use fuzz::{
     feature_list::FEATURES,
     fuzzbase::{DummyFuzzer, FResult, Fuzzer},
@@ -159,6 +159,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     ]
     .into_iter()
     .collect();
+    for filter in &mut filters {
+        filter.import(args)?;
+        info!("Filter imported");
+    }
 
     create_dir_all(&args.output)?;
     info!("Begin generating...");
@@ -171,7 +175,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             .iter()
             .map(|x| Arc::new(Mutex::new(dyn_clone::clone_box(&**x))))
             .collect();
-        run::<FuzzerType>(args, fuzzer, idx.clone(), filters)?;
+        run::<FuzzerType>(args, fuzzer, idx.clone(), filters.clone())?;
+
+        for filter in &filters {
+            let lock = filter.lock().map_err(|s| s.to_string())?;
+            lock.export(args)?;
+        }
+        info!("Filter exported");
     } else {
         let mut handles = Vec::default();
         let barrier = Arc::new(Barrier::new(args.nthread));
@@ -187,6 +197,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .iter()
             .map(|x| Arc::new(Mutex::new(dyn_clone::clone_box(&**x))))
             .collect();
+
         while i < args.nthread {
             let fuzzer = dyn_clone::clone_box(&*fuzzer);
             let fuzzer = Arc::new(Mutex::new(fuzzer));
@@ -212,6 +223,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         while let Some(handle) = handles.pop() {
             let res = handle.join().unwrap();
             res.map_err(|e| e as Box<dyn Error>)?;
+        }
+        info!("All threads exited!");
+
+        for filter in &filters {
+            let lock = filter.lock().map_err(|s| s.to_string())?;
+            lock.export(args)?;
         }
     }
 

@@ -1,8 +1,14 @@
-use std::{collections::HashSet, error::Error};
+use std::{
+    collections::HashSet,
+    error::Error,
+    fs::{self, read_to_string},
+};
 
 use regex::Regex;
 
-use crate::fuzz::fuzzbase::FResult;
+use serde_json;
+
+use crate::{conf::Args, debug, fuzz::fuzzbase::FResult};
 
 use super::ICEFilter;
 
@@ -46,9 +52,11 @@ fn filter_query_stack(msg: &[u8]) -> Result<Option<Vec<Vec<u8>>>, Box<dyn Error>
     Ok(Some(stack))
 }
 
+type FilterData = HashSet<Vec<Vec<u8>>>;
+
 #[derive(Clone)]
 pub struct QueryStackFilter {
-    existed: HashSet<Vec<Vec<u8>>>,
+    existed: FilterData,
 }
 impl QueryStackFilter {
     #[allow(clippy::new_ret_no_self)]
@@ -86,13 +94,33 @@ impl ICEFilter for QueryStackFilter {
     fn reset(&mut self) {
         self.existed.clear();
     }
+    fn import(&mut self, args: &Args) -> Result<(), Box<dyn Error>> {
+        let p = args.datas.join("panic_filters.json");
+        if !p.exists() {
+            return Ok(());
+        }
+        let f = read_to_string(p)?;
+        let datas: FilterData = serde_json::from_str(&f)?;
+        debug!("QueryStack importing panic filters: {}", datas.len());
+        self.existed.extend(datas);
+        Ok(())
+    }
+    fn export(&self, args: &Args) -> Result<(), Box<dyn Error>> {
+        let datas = serde_json::to_string(&self.existed)?;
+        let p = args.datas.join("panic_filters.json");
+        fs::write(p, datas)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::env::temp_dir;
 
-    use crate::{fuzz::fuzzbase::{DummyFuzzer, Fuzzer}, util::gen_alnum};
+    use crate::{
+        fuzz::fuzzbase::{DummyFuzzer, Fuzzer},
+        util::gen_alnum,
+    };
 
     use super::*;
 
@@ -104,13 +132,10 @@ mod tests {
         let res = DummyFuzzer::compile(code, &tmp_file, &tmp_out, &[]).unwrap();
         let res = match res.1 {
             FResult::InternalCompileError(x) => x,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
         let res = filter_query_stack(&res.stderr).unwrap();
-        let expected: Vec<Vec<u8>> = vec![
-            b"typeck".to_vec(),
-            b"analysis".to_vec(),
-        ];
+        let expected: Vec<Vec<u8>> = vec![b"typeck".to_vec(), b"analysis".to_vec()];
 
         let res = res.unwrap();
         assert_eq!(res, expected);

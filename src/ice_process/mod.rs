@@ -1,6 +1,8 @@
+use std::error::Error;
+
 use dyn_clone::DynClone;
 
-use crate::fuzz::fuzzbase::FResult;
+use crate::{conf::Args, fuzz::fuzzbase::FResult};
 
 pub mod querystack;
 pub mod panicfunc;
@@ -11,6 +13,8 @@ pub trait ICEFilter: Send + Sync + DynClone {
     fn filter(&self, info: &FResult) -> bool;
     fn add(&mut self, info: &FResult) -> bool;
     fn reset(&mut self);
+    fn import(&mut self, args: &Args) -> Result<(), Box<dyn Error>>;
+    fn export(&self, args: &Args) -> Result<(), Box<dyn Error>>;
 }
 
 #[derive(Default, Clone)]
@@ -29,4 +33,10 @@ impl ICEFilter for DummyFilter {
         true
     }
     fn reset(&mut self) {}
+    fn import(&mut self, _: &Args) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+    fn export(&self, _: &Args) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
 }
