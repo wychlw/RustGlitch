@@ -12,14 +12,12 @@ pub(super) mod other;
 use std::error::Error;
 
 use info::env::ASTEnv;
-use syn::fold::Fold;
 
 #[allow(unused)]
 pub trait FuzzerStrategyImpl<Node> {
-    fn do_fuzz(&self, _v: &mut dyn Fold, node: Node) -> Result<Node, Box<dyn Error>> {
-        
-        Ok(node)
-    }
+    // fn do_mask(&self, _v: &mut dyn Fold, node: Node) -> Result<Node, Box<dyn Error>> {
+    //     Ok(node)
+    // }
     fn do_gen(&mut self) -> Result<Node, Box<dyn Error>>;
     fn gen_weight(&self) -> fn(&ASTEnv) -> f64;
 }
@@ -81,14 +79,14 @@ macro_rules! register_nodetype {
             }
         }
         // #[allow(non_snake_case)]
-        // pub fn ${concat("do_fuzz_", $node_type)}(v: &mut dyn Fold, node: $node_type) -> Result<$crate::strategies::syn::strategy::DoFuzzRes<$node_type>, Box<dyn Error>> {
+        // pub fn ${concat("do_mask_", $node_type)}(v: &mut dyn Fold, node: $node_type) -> Result<$crate::strategies::syn::strategy::DoFuzzRes<$node_type>, Box<dyn Error>> {
         //     let strategies = ${concat("get_strategies_", $node_type)}()?;
         //     for strategy in strategies.iter() {
         //         let inner = &strategy.inner();
         //         if !inner.is_kind(&node) {
         //             continue;
         //         }
-        //         let res = inner.do_fuzz(v, node)?;
+        //         let res = inner.do_mask(v, node)?;
         //         return Ok($crate::strategies::syn::strategy::DoFuzzRes::Success(res));
         //     }
         //     Ok($crate::strategies::syn::strategy::DoFuzzRes::NoStreatgy(node))
@@ -108,14 +106,14 @@ macro_rules! register_nodetype {
             Err(format!("No such a strategy by Gen {}: {:#?}", stringify!($node_type), node).into())
         }
         // #[allow(non_snake_case)]
-        // pub fn ${concat("do_fuzz_id_", $node_type)}(v: &mut dyn Fold, id: &str, node: $node_type) -> Result<$crate::strategies::syn::strategy::DoFuzzRes<$node_type>, Box<dyn Error>> {
+        // pub fn ${concat("do_mask_id_", $node_type)}(v: &mut dyn Fold, id: &str, node: $node_type) -> Result<$crate::strategies::syn::strategy::DoFuzzRes<$node_type>, Box<dyn Error>> {
         //     let strategies = ${concat("get_strategies_", $node_type)}()?;
         //     for strategy in strategies.iter() {
         //         let inner = &strategy.inner();
         //         if !inner.is_by_id(id) {
         //             continue;
         //         }
-        //         let res = inner.do_fuzz(v, node)?;
+        //         let res = inner.do_mask(v, node)?;
         //         return Ok($crate::strategies::syn::strategy::DoFuzzRes::Success(res));
         //     }
         //     Ok($crate::strategies::syn::strategy::DoFuzzRes::NoStreatgy(node))
@@ -156,11 +154,11 @@ macro_rules! use_nodetype {
         #[allow(unused_imports)]
         use $crate::strategies::$file::${concat("get_strategies_", $node_type)};
         // #[allow(unused_imports)]
-        // use $crate::fuzz::$file::${concat("do_fuzz_", $node_type)};
+        // use $crate::fuzz::$file::${concat("do_mask_", $node_type)};
         #[allow(unused_imports)]
         use $crate::strategies::$file::${concat("do_gen_", $node_type)};
         // #[allow(unused_imports)]
-        // use $crate::fuzz::$file::${concat("do_fuzz_id_", $node_type)};
+        // use $crate::fuzz::$file::${concat("do_mask_id_", $node_type)};
         #[allow(unused_imports)]
         use $crate::strategies::$file::${concat("do_gen_id_", $node_type)};
         #[allow(unused_imports)]
@@ -169,19 +167,19 @@ macro_rules! use_nodetype {
 }
 
 #[macro_export]
-macro_rules! do_fuzz {
+macro_rules! do_mask {
     ($node_type: ident, $self: ident, $node: ident) => {
-        // ${concat("do_fuzz_", $node_type)}($self, $node)
+        // ${concat("do_mask_", $node_type)}($self, $node)
     };
 }
 
 #[macro_export]
-macro_rules! do_fuzz_name {
+macro_rules! do_mask_name {
     ($node_type: ident, $self: ident, $name: ident, $node: ident) => {
-        ${concat("do_fuzz_id_", $node_type)}($self, stringify!(${concat("__strategy_id_", $name)}), $node)
+        ${concat("do_mask_id_", $node_type)}($self, stringify!(${concat("__strategy_id_", $name)}), $node)
     };
     ($file: ident, $node_type: ident, $self: ident, $name: ident, $node: ident) => {
-        $crate::fuzz::$file::${concat("do_fuzz_id_", $node_type)}($self, stringify!(${concat("__strategy_id_", $name)}), $node)
+        $crate::fuzz::$file::${concat("do_mask_id_", $node_type)}($self, stringify!(${concat("__strategy_id_", $name)}), $node)
     }
 }
 

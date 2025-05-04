@@ -1,8 +1,5 @@
 use std::{
-    iter,
-    mem::ManuallyDrop,
-    ops::{Deref, DerefMut},
-    sync::{LazyLock, Mutex, RwLock},
+    iter, mem::ManuallyDrop, ops::{Deref, DerefMut}, sync::{LazyLock, Mutex, RwLock}
 };
 
 use rand::{

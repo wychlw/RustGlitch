@@ -1,4 +1,8 @@
-use std::{collections::HashSet, error::Error, fs::{self, read_to_string}};
+use std::{
+    collections::HashSet,
+    error::Error,
+    fs::{self, read_to_string},
+};
 
 use crate::{conf::Args, debug, fuzz::fuzzbase::FResult};
 
@@ -12,19 +16,18 @@ fn filter_panic_file(msg: &[u8]) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
     let msg_str = str::from_utf8(msg)?;
     let msg: Vec<_> = msg_str
         .lines()
-        .filter_map(|s| -> Option<Vec<u8>> {
+        .filter_map(|s| -> Option<_> {
             let begin = s.find(QUERY_PANIC_BEGIN)? + QUERY_PANIC_BEGIN.len();
             let end = s.len() - 1;
-            let b = &s.as_bytes()[begin..end];
-            Some(b.to_vec())
+            let b = &s[begin..end];
+            Some(b.as_bytes().to_vec())
         })
         .collect();
     Ok(msg.last().map(|v| v.to_owned()))
 }
 
-
 type FilterData = HashSet<Vec<u8>>;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PanicFuncFilter {
     existed: FilterData,
 }
@@ -43,10 +46,12 @@ impl ICEFilter for PanicFuncFilter {
             _ => return false,
         };
         let msg = filter_panic_file(&info.stderr);
+        debug!("PanicFuncFilter filtering: {:#?}", msg);
         let msg = match msg {
             Ok(Some(x)) => x,
             _ => return false,
         };
+        debug!("The panic function is: \n\t{}", str::from_utf8(&msg).unwrap_or_default());
         self.existed.contains(&msg)
     }
     fn add(&mut self, info: &FResult) -> bool {
@@ -87,7 +92,10 @@ impl ICEFilter for PanicFuncFilter {
 mod tests {
     use std::env::temp_dir;
 
-    use crate::{fuzz::fuzzbase::{DummyFuzzer, Fuzzer}, util::gen_alnum};
+    use crate::{
+        fuzz::fuzzbase::{DummyFuzzer, Fuzzer},
+        util::gen_alnum,
+    };
 
     use super::*;
 
@@ -99,7 +107,7 @@ mod tests {
         let res = DummyFuzzer::compile(code, &tmp_file, &tmp_out, &[]).unwrap();
         let res = match res.1 {
             FResult::InternalCompileError(x) => x,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
         let res = filter_panic_file(&res.stderr).unwrap();
 

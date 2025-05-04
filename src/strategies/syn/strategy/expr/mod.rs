@@ -1,4 +1,5 @@
 mod expr;
+mod exprarray;
 mod exprasync;
 mod exprawait;
 mod exprbin;

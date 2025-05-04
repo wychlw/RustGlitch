@@ -1,6 +1,7 @@
 import os
 import logging
 import random
+import copy
 import json
 
 from tqdm import tqdm
@@ -9,7 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers import TrainingArguments, Trainer
 from peft import LoraConfig, get_peft_model, TaskType
 from torch.utils.data import DataLoader, Dataset
-from torch.cuda import amp
+import deepspeed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,18 +20,27 @@ def Args():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--epochs', type=int, default=10)
-    parser.add_argument('-b', '--batch_size', type=int, default=16)
+    parser.add_argument('-b', '--batch_size', type=int, default=None)
     parser.add_argument('-lr', '--learning_rate', type=float, default=1e-5)
     parser.add_argument('-i', '--input', type=str, help='input dir', nargs='+')
     parser.add_argument('-m', '--model', type=str,
                         help='model path', default='./model')
     parser.add_argument('-s', '--save', type=str,
                         help='save path', default='./model_out')
+    dtype_group = parser.add_mutually_exclusive_group()
+    dtype_group.add_argument('--fp16', action='store_true',
+                             help='use fp16', default=False)
+    dtype_group.add_argument('--bf16', action='store_true',
+                             help='use bf16', default=False)
     parser.add_argument('--layers', type=int, default=10)
     parser.add_argument('--trainer', action='store_true',
                         help='use huggingface trainer', default=False)
     parser.add_argument('--lora', action='store_true',
                         help='enable lora trainer', default=False)
+
+    parser.add_argument('--local_rank', type=int, default=-1,
+                        help='local rank passed from distributed launcher')
+    parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
     return args
 
@@ -42,6 +52,25 @@ class MyDataset(Dataset):
             for file in files:
                 if file.endswith('.rs'):
                     with open(os.path.join(root, file), 'r', encoding="utf-8") as f:
+                        code = f.read()
+                        # Remove comments, empty lines, and leading/trailing whitespace
+                        lines = code.splitlines()
+                        lines = [line.strip()
+                                 for line in lines if line.strip()]
+                        in_comment = False
+                        new_lines = []
+                        for line in lines:
+                            if line.startswith('//'):
+                                continue
+                            if line.startswith('/*'):
+                                in_comment = True
+                            if line.endswith('*/'):
+                                in_comment = False
+                                continue
+                            if in_comment:
+                                continue
+                            new_lines.append(line)
+                        code = '\n'.join(new_lines)
                         codes.append(f.read())
 
         return codes
@@ -53,56 +82,75 @@ class MyDataset(Dataset):
         return codes
 
     def __gen_tokens(self, tokenizer, code_prefix="", code_middle="", code_suffix=""):
-        # ChatGLM
-        #         prefix = \
-        #             f"""
-        # [gMASK]<sop>
-        # <|system|>
-        # You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features.
-        # You shall only generate code and nothing else.
-        # <|user|>
-        # ###PATH:ice_gen.rs
-        # ###LANGUAGE:Rust
-        # ###MODE:BLOCK
-        # <|code_suffix|>{code_suffix}<|code_prefix|>{code_prefix}<|code_middle|><|assistant|>
-        # """
 
-        # Qwen
-        prefix = \
-            f"""
-You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features.
-<|fim_prefix|>{code_prefix}<|fim_suffix|>{code_suffix}<|fim_middle|>
-"""
+        im_start = tokenizer.im_start_id
+        im_end = tokenizer.im_end_id
+        nl_tokens = tokenizer('\n').input_ids
+        _system = tokenizer('system').input_ids
+        _user = tokenizer('user').input_ids
+        _assistant = tokenizer('assistant').input_ids
+        fim_prefix = tokenizer('<|fim_prefix|>').input_ids
+        fim_suffix = tokenizer('<|fim_suffix|>').input_ids
+        fim_middle = tokenizer('<|fim_middle|>').input_ids
+#         prefix = \
+#             f"""<|im_start|>system
+# You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features. Infill the code directily.<|im_end|>
+# <|im_start|>user
+# <|fim_prefix|>{code_prefix}<|fim_suffix|>{code_suffix}<|fim_middle|><|im_end|>
+# <|im_start|>assistant
+# """
+        # # prefix = f"<|fim_prefix|>{code_prefix}<|fim_suffix|>{code_suffix}<|fim_middle|>"
+        # system_msg = "You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features. Infill the code directily."
+        # system_tokens = [im_start] + _system + \
+        #     tokenizer(system_msg).input_ids + [im_end] + nl_tokens
+        # user_tokens = [im_start] + _user + fim_prefix + tokenizer(code_prefix).input_ids + fim_suffix + tokenizer(
+        #     code_suffix).input_ids + fim_middle + [im_end] + nl_tokens
+        # assistant_tokens = [im_start] + _assistant + nl_tokens
 
-        prefix_tokens = tokenizer.encode(
-            text=prefix, padding=True, truncation=True, add_special_tokens=True
-        )
-        prefix_len = len(prefix_tokens)
+        # # prefix_tokens = tokenizer.encode(
+        # #     text=prefix, padding=True, truncation=True, add_special_tokens=True
+        # # )
+        # # prefix_len = len(prefix_tokens)
+        # prefix_len = len(system_tokens) + len(user_tokens) + \
+        #     len(assistant_tokens)
+        # other_tokens = tokenizer.encode(
+        #     text=code_middle, padding=True, truncation=True, add_special_tokens=True
+        # )
+        # other_tokens = other_tokens + [tokenizer.eos_token_id]
+        # # res = prefix_tokens + other_tokens
+        # res = system_tokens + user_tokens + assistant_tokens + other_tokens
+        # return (res, prefix_len)
+        prefix = fim_prefix + tokenizer(code_prefix).input_ids + fim_suffix + tokenizer(
+            code_suffix).input_ids + fim_middle + nl_tokens
+        prefix_len = len(prefix)
         other_tokens = tokenizer.encode(
             text=code_middle, padding=True, truncation=True, add_special_tokens=True
         )
         other_tokens = other_tokens + [tokenizer.eos_token_id]
-        res = prefix_tokens + other_tokens
+        res = prefix + other_tokens
         return (res, prefix_len)
 
     def __init__(self, input_dirs, tokenizer, args):
+        TOKEN_MAX_LEN = 1024
         codes = self.__generate_train_data(input_dirs)
 
         datas = []
         for code in codes:
-            (tokens, prefix_len) = self.__gen_tokens(
-                tokenizer,
-                code_prefix="",
-                code_middle=code,
-                code_suffix=""
-            )
-            labels = [-100] * prefix_len + tokens[prefix_len:]
-            datas.append((tokens, labels))
-
             if len(code) <= 5:
                 continue
-            if len(code) > 1024:
-                continue  # OOM...
+            # if len(code) > 1024:
+            #     continue  # OOM...
+
+            # (tokens, prefix_len) = self.__gen_tokens(
+            #     tokenizer,
+            #     code_prefix="",
+            #     code_middle=code,
+            #     code_suffix=""
+            # )
+            # if len(tokens) > TOKEN_MAX_LEN:
+            #     continue
+            # labels = [-100] * prefix_len + tokens[prefix_len:]
+            # datas.append((tokens, labels))
 
             code_split_point = random.randrange(1, len(code))
 
@@ -112,6 +160,8 @@ You are a rust professor aimed in finding bugs in rust compilers. You need to gi
                 code_middle=code[code_split_point:],
                 code_suffix=""
             )
+            if len(tokens) > TOKEN_MAX_LEN:
+                continue
             labels = [-100] * prefix_len + tokens[prefix_len:]
             datas.append((tokens, labels))
 
@@ -124,6 +174,8 @@ You are a rust professor aimed in finding bugs in rust compilers. You need to gi
                 code_middle=code[code_split_front:code_split_back],
                 code_suffix=code[:code_split_back]
             )
+            if len(tokens) > TOKEN_MAX_LEN:
+                continue
             labels = [-100] * prefix_len + tokens[prefix_len:]
             datas.append((tokens, labels))
 
@@ -168,67 +220,154 @@ class DataCollator(object):
 
 def save_model(model, args):
     os.makedirs(args.save, exist_ok=True)
-    model.save_pretrained(args.save)
+    model = copy.deepcopy(model)
+    if args.lora:
+        smodel = model.merge_and_unload()
+    else:
+        smodel = model
+    smodel.save_pretrained(args.save)
     logger.info("model saved to %s", args.save)
 
 
+def save_model_epoch(model, args, epoch):
+    model_p = os.path.join(args.save, f"{epoch}")
+    os.makedirs(model_p, exist_ok=True)
+    model = copy.deepcopy(model)
+    if args.lora:
+        smodel = model.merge_and_unload()
+    else:
+        smodel = model
+    smodel.save_pretrained(model_p)
+    logger.info("model saved to %s", model_p)
+
+
+def print_trainable_parameters(model):
+    trainable_params = 0
+    all_params = 0
+    for _, param in model.named_parameters():
+        num_params = param.numel()
+        all_params += num_params
+        if param.requires_grad:
+            trainable_params += num_params
+    print(f"Total param: {all_params}")
+    print(f"Trainable param: {trainable_params}")
+    print(f"Percentage: {100 * trainable_params / all_params:.2f}%")
+
+
 def self_train(model, tokenizer, dataset, device, args):
+    train_size = int(len(dataset) * 0.8)
+    eval_size = int(len(dataset) * 0.15)
+    rem_size = len(dataset) - train_size - eval_size
+    train_dataset, eval_dataset, rem_dataset = torch.utils.data.random_split(
+        dataset, [train_size, eval_size, rem_size]
+    )
     model = model.to(device)
     model.train()
 
     collator = DataCollator(tokenizer)
-    loader = DataLoader(dataset, collate_fn=collator,
-                        batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, collate_fn=collator,
+                              batch_size=args.batch_size, shuffle=True, num_workers=0)
+
+    eval_loader = DataLoader(eval_dataset, collate_fn=collator,
+                             batch_size=args.batch_size, shuffle=True, num_workers=0)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     lr_scheduler = get_scheduler(
         name='linear', optimizer=optimizer, num_warmup_steps=0,
-        num_training_steps=len(loader) * args.epochs
+        num_training_steps=len(train_loader) * args.epochs
     )
-    scaler = amp.GradScaler()
+    if args.fp16:
+        scaler = torch.amp.GradScaler(device=device)
+    else:
+        scaler = None
 
     loss_history = []
+    eval_loss_history = []
     for epoch in tqdm(range(args.epochs)):
         model.train()
-
         losses = 0.
         optimizer.zero_grad()
-        for batch in tqdm(loader):
+        cnt = 0
+        for batch in (pbar := tqdm(train_loader)):
             optimizer.zero_grad()
             inputs = batch
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            with amp.autocast():
+            if args.fp16:
+                with torch.cuda.amp.autocast(device_type=device):
+                    outputs = model(**inputs)
+                    loss = outputs.loss
+            elif args.bf16:
+                with torch.amp.autocast(device_type=device, dtype=torch.bfloat16):
+                    outputs = model(**inputs)
+                    loss = outputs.loss
+            else:
                 outputs = model(**inputs)
                 loss = outputs.loss
-            l = scaler.scale(loss)
-            losses += l.item()
-            l.backward()
-            scaler.step(optimizer)
-            scaler.update()
+            losses += float(loss.item())
 
-            # loss.backward()
-            # optimizer.step()
+            if args.fp16:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
             lr_scheduler.step()
 
-        logger.info("epoch %d, loss: %f", epoch, losses / len(loader))
-        loss_history.append(losses / len(loader))
+            cnt += 1
+            pbar.set_description(f"epoch {epoch}, loss: {losses / cnt:.2f}")
+
+            del inputs
+            del outputs
+            del loss
+            torch.cuda.empty_cache()
+
+        logger.info("epoch %d, loss: %f", epoch, losses / len(train_loader))
+        loss_history.append(losses / len(train_loader))
+
+        #  Evaluate
+        model.eval()
+        eval_losses = 0.
+        for batch in tqdm(eval_loader):
+            inputs = batch
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model(**inputs)
+                loss = outputs.loss
+            eval_losses += float(loss.item())
+
+            del inputs
+            del outputs
+            del loss
+            torch.cuda.empty_cache()
+
+        logger.info("eval epoch %d, loss: %f",
+                    epoch, eval_losses / len(eval_loader))
+        eval_loss_history.append(eval_losses / len(eval_loader))
+
+        save_model_epoch(model, args, epoch)
 
     with open('train_log.json', 'w', encoding='utf-8') as f:
         json.dump(loss_history, f)
+    with open('eval_log.json', 'w', encoding='utf-8') as f:
+        json.dump(eval_loss_history, f)
     save_model(model, args)
 
 
 def trainer_train(model, tokenizer, dataset, device, args):
-    train_size = int(len(dataset) * 0.85)
-    eval_size = len(dataset) - train_size
-    train_dataset, eval_dataset = torch.utils.data.random_split(
-        dataset, [train_size, eval_size]
+    train_size = int(len(dataset) * 0.8)
+    eval_size = int(len(dataset) * 0.15)
+    rem_size = len(dataset) - train_size - eval_size
+    train_dataset, eval_dataset, rem_dataset = torch.utils.data.random_split(
+        dataset, [train_size, eval_size, rem_size]
     )
     model = model.to(device)
     training_args = TrainingArguments(
         output_dir=args.save,
         per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
         learning_rate=args.learning_rate,
         logging_dir='./logs',
@@ -236,9 +375,11 @@ def trainer_train(model, tokenizer, dataset, device, args):
         save_strategy="epoch",
         save_total_limit=5,
         eval_strategy="epoch",
-        fp16=True,
-        # gradient_checkpointing=True,
+        bf16=args.bf16,
+        fp16=args.fp16,
+        gradient_accumulation_steps=2,
         load_best_model_at_end=True,
+        deepspeed=None if not args.deepspeed else args.deepspeed_config,
         push_to_hub=False
     )
     trainer = Trainer(
@@ -282,7 +423,7 @@ def main(args):
     tokenizer = AutoTokenizer.from_pretrained(
         model_path,
         pad_token='<|endoftext|>',
-        eos_token='<|endoftext|>',
+        eos_token='<|im_end|>',
         padding_side="right",
         trust_remote_code=True
     )
@@ -298,17 +439,20 @@ def main(args):
             lora_dropout=0.1
         )
         model = get_peft_model(model, lora_config)
-    if not args.lora:
+    else:
         for name, param in model.named_parameters():
             try:
-                idx = int(name.split('.')[3])
+                idx = int(name.split('.')[2])
             except:
                 continue
             if idx < args.layers:
                 param.requires_grad = False
             else:
                 param.requires_grad = True
+
     logger.info("model: \n%s", repr(model))
+
+    print_trainable_parameters(model)
 
     logger.info("loading codes from %s", args.input)
     dataset = MyDataset(args.input, tokenizer, args)

@@ -1,4 +1,4 @@
-pub static FEATURES: [&str; 440] = [
+pub static FEATURES: [&str; 432] = [
     "associated_const_equality",
     "associated_type_defaults",
     "async_fn_track_caller",
@@ -9,7 +9,6 @@ pub static FEATURES: [&str; 440] = [
     "box_patterns",
     "bpf_target_feature",
     "c_variadic",
-    "cfg_boolean_literals",
     "cfg_overflow_checks",
     "cfg_relocation_model",
     "cfg_sanitize",
@@ -64,7 +63,6 @@ pub static FEATURES: [&str; 440] = [
     "impl_trait_in_assoc_type",
     "impl_trait_in_bindings",
     "impl_trait_in_fn_trait_return",
-    "inline_const_pat",
     "intra_doc_pointers",
     "lahfsahf_target_feature",
     "large_assignments",
@@ -81,7 +79,6 @@ pub static FEATURES: [&str; 440] = [
     "more_qualified_paths",
     "multiple_supertrait_upcastable",
     "must_not_suspend",
-    "naked_functions",
     "native_link_modifiers_as_needed",
     "negative_impls",
     "never_type",
@@ -94,7 +91,6 @@ pub static FEATURES: [&str; 440] = [
     "patchable_function_entry",
     "postfix_match",
     "powerpc_target_feature",
-    "precise_capturing_in_traits",
     "prfchw_target_feature",
     "proc_macro_hygiene",
     "register_tool",
@@ -183,7 +179,6 @@ pub static FEATURES: [&str; 440] = [
     "const_box",
     "const_btree_len",
     "const_carrying_mul_add",
-    "const_cell",
     "const_eq_ignore_ascii_case",
     "const_eval_select",
     "const_format_args",
@@ -248,7 +243,6 @@ pub static FEATURES: [&str; 440] = [
     "future_join",
     "gen_future",
     "get_mut_unchecked",
-    "hash_raw_entry",
     "hash_set_entry",
     "hasher_prefixfree_extras",
     "hint_must_use",
@@ -437,8 +431,6 @@ pub static FEATURES: [&str; 440] = [
     "wrapping_next_power_of_two",
     "write_all_vectored",
     "yeet_desugar_details",
-    "min_generic_const_args",
-    "inherent_associated_types",
 ];
 
 pub static INCOMPLETE_FEATURE: [&str; 20] = [

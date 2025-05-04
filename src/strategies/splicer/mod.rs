@@ -166,10 +166,9 @@ impl Clone for SplicerFuzzerHolder {
 pub struct SplicerFuzzer {
     inner: SplicerFuzzerHolder,
 }
-impl SplicerFuzzer {
+impl Fuzzer for SplicerFuzzer {
     #[allow(clippy::new_ret_no_self)]
-    #[allow(unused)]
-    pub fn new(args: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
+    fn new(args: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
         let dir = &args.input;
         let trees = parse_dir(dir)?;
         let res = SplicerFuzzerHolderBuilder {
@@ -180,8 +179,6 @@ impl SplicerFuzzer {
         let res = Self { inner: res };
         Ok(Box::new(res))
     }
-}
-impl Fuzzer for SplicerFuzzer {
     fn generate(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
         'continue_here: for _ in 0..20 {
             let code = self

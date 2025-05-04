@@ -3,7 +3,6 @@ import logging
 import random
 import json
 
-import torch_npu.npu
 from tqdm import tqdm
 import torch
 import torch_npu
@@ -214,6 +213,7 @@ def self_train(model, tokenizer, dataset, device, args):
             # loss.backward()
             # optimizer.step()
             lr_scheduler.step()
+            
 
         logger.info("epoch %d, loss: %f", epoch, losses / len(loader))  
         loss_history.append(losses / len(loader))

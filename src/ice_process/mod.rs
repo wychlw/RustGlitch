@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, fmt::Debug};
 
 use dyn_clone::DynClone;
 
@@ -9,7 +9,7 @@ pub mod panicfunc;
 pub mod flagbisect;
 
 #[allow(unused)]
-pub trait ICEFilter: Send + Sync + DynClone {
+pub trait ICEFilter: Send + Sync + DynClone + Debug {
     fn filter(&self, info: &FResult) -> bool;
     fn add(&mut self, info: &FResult) -> bool;
     fn reset(&mut self);
@@ -17,7 +17,7 @@ pub trait ICEFilter: Send + Sync + DynClone {
     fn export(&self, args: &Args) -> Result<(), Box<dyn Error>>;
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct DummyFilter {}
 impl DummyFilter {
     #[allow(clippy::new_ret_no_self)]

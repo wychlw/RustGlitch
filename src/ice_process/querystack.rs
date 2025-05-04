@@ -54,7 +54,7 @@ fn filter_query_stack(msg: &[u8]) -> Result<Option<Vec<Vec<u8>>>, Box<dyn Error>
 
 type FilterData = HashSet<Vec<Vec<u8>>>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct QueryStackFilter {
     existed: FilterData,
 }
@@ -77,6 +77,13 @@ impl ICEFilter for QueryStackFilter {
             Ok(Some(x)) => x,
             _ => return false,
         };
+        debug!("The query stacks are: \n\t{}", 
+            stack
+                .iter()
+                .map(|s| str::from_utf8(s).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n\t\t")
+        );
         self.existed.contains(&stack)
     }
     fn add(&mut self, info: &FResult) -> bool {
