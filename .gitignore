@@ -6,6 +6,6 @@
 /model/*
 /model/**
 /datas
-datas.tar.xz
+#datas.tar.xz
 .tool-versions
 /ppt

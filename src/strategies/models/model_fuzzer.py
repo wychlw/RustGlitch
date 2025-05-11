@@ -46,12 +46,66 @@ class ModelFuzzerBase:
 def load_model(model_path, tokenizer_path, device):
     kwargs = {}
     logging.info(f"loading model from {model_path} ...")
-    model = AutoModelForCausalLM.from_pretrained(model_path, **kwargs)
+    model = AutoModelForCausalLM.from_pretrained(model_path, 
+        device_map="auto",
+        trust_remote_code=True, **kwargs)
 
-    model = model.half().to(device)
+    model = model.to(device)
     logging.info(f"loading tokenizer from {tokenizer_path} ...")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     return model, tokenizer
+
+# class Qwen2_5:
+#     def __init__(self, model_path):
+#         model = AutoModelForCausalLM.from_pretrained(
+#             model_path,
+#             # torch_dtype="auto",
+#             device_map="auto",
+#             trust_remote_code=True
+#         )
+#         device = "cuda" if torch.cuda.is_available() else "cpu"
+#         self.model = model.to(device)
+#         self.tokenizer = AutoTokenizer.from_pretrained(
+#             model_path,
+#             pad_token='<|endoftext|>',
+#             eos_token='<|im_end|>',
+#             padding_side="right",
+#             trust_remote_code=True
+#         )
+#         self.tokenizer.add_special_tokens(
+#             {"additional_special_tokens": ["<|im_end|>", "<|im_start|>"]})
+#         print(f"model loaded from {model_path}")
+
+#     def __gen_tokens(self, tokenizer, code_prefix="", code_middle="", code_suffix=""):
+#         nl_tokens = tokenizer('\n').input_ids
+#         fim_prefix = tokenizer('<|fim_prefix|>').input_ids
+#         fim_suffix = tokenizer('<|fim_suffix|>').input_ids
+#         fim_middle = tokenizer('<|fim_middle|>').input_ids
+#         prefix = fim_prefix + tokenizer(code_prefix).input_ids + fim_suffix + tokenizer(
+#             code_suffix).input_ids + fim_middle + nl_tokens
+#         prefix_len = len(prefix)
+#         other_tokens = tokenizer.encode(
+#             text=code_middle, padding=True, truncation=True, add_special_tokens=True
+#         )
+#         other_tokens = other_tokens + [tokenizer.eos_token_id]
+#         res = prefix + other_tokens
+#         return (res, prefix_len)
+    
+#     def generate(self, code_prefix="", code_suffix="", gen_max = 128):
+#         (input_ids, _) = self.__gen_tokens(
+#             self.tokenizer, code_prefix=code_prefix, code_suffix=code_suffix
+#         )
+#         with torch.no_grad():
+#             output = self.model.generate(
+#                 input_ids=input_ids.to(self.model.device),
+#                 do_sample=True,
+#                 top_p=0.95,
+#                 temperature=0.4,
+#                 max_length=len(input_ids) + gen_max,
+#             )
+#             torch.cuda.empty_cache()
+        
+
 
 
 class InCoder:

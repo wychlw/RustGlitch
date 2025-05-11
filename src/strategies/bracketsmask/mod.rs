@@ -82,8 +82,16 @@ impl MaskFuzzer for BracketsMask {
             }
         }
 
-        let code_prefix = &code[0..begin];
-        let code_suffix = &code[end..];
+        let code = code.to_string();
+
+        while begin > 0 && !code.is_char_boundary(begin) {
+            begin -= 1;
+        }
+        while end < code.len() && !code.is_char_boundary(end) {
+            end += 1;
+        }
+        let code_prefix = code[..begin].to_string();
+        let code_suffix = code[end..].to_string();
         let code_prefix = code_prefix.to_string().into_bytes();
         let code_suffix = code_suffix.to_string().into_bytes();
 

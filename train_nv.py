@@ -7,7 +7,7 @@ import json
 from tqdm import tqdm
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
-from transformers import TrainingArguments, Trainer
+from transformers import TrainingArguments, Trainer, DataCollatorForSeq2Seq
 from peft import LoraConfig, get_peft_model, TaskType
 from torch.utils.data import DataLoader, Dataset
 import deepspeed
@@ -54,24 +54,24 @@ class MyDataset(Dataset):
                     with open(os.path.join(root, file), 'r', encoding="utf-8") as f:
                         code = f.read()
                         # Remove comments, empty lines, and leading/trailing whitespace
-                        lines = code.splitlines()
-                        lines = [line.strip()
-                                 for line in lines if line.strip()]
-                        in_comment = False
-                        new_lines = []
-                        for line in lines:
-                            if line.startswith('//'):
-                                continue
-                            if line.startswith('/*'):
-                                in_comment = True
-                            if line.endswith('*/'):
-                                in_comment = False
-                                continue
-                            if in_comment:
-                                continue
-                            new_lines.append(line)
-                        code = '\n'.join(new_lines)
-                        codes.append(f.read())
+                        # lines = code.splitlines()
+                        # lines = [line.strip()
+                        #          for line in lines if line.strip()]
+                        # in_comment = False
+                        # new_lines = []
+                        # for line in lines:
+                        #     if line.startswith('//'):
+                        #         continue
+                        #     if line.startswith('/*'):
+                        #         in_comment = True
+                        #     if line.endswith('*/'):
+                        #         in_comment = False
+                        #         continue
+                        #     if in_comment:
+                        #         continue
+                        #     new_lines.append(line)
+                        # code = '\n'.join(new_lines)
+                        codes.append(code)
 
         return codes
 
@@ -83,52 +83,38 @@ class MyDataset(Dataset):
 
     def __gen_tokens(self, tokenizer, code_prefix="", code_middle="", code_suffix=""):
 
-        im_start = tokenizer.im_start_id
-        im_end = tokenizer.im_end_id
-        nl_tokens = tokenizer('\n').input_ids
-        _system = tokenizer('system').input_ids
-        _user = tokenizer('user').input_ids
-        _assistant = tokenizer('assistant').input_ids
-        fim_prefix = tokenizer('<|fim_prefix|>').input_ids
-        fim_suffix = tokenizer('<|fim_suffix|>').input_ids
-        fim_middle = tokenizer('<|fim_middle|>').input_ids
-#         prefix = \
-#             f"""<|im_start|>system
-# You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features. Infill the code directily.<|im_end|>
-# <|im_start|>user
-# <|fim_prefix|>{code_prefix}<|fim_suffix|>{code_suffix}<|fim_middle|><|im_end|>
-# <|im_start|>assistant
-# """
-        # # prefix = f"<|fim_prefix|>{code_prefix}<|fim_suffix|>{code_suffix}<|fim_middle|>"
-        # system_msg = "You are a rust professor aimed in finding bugs in rust compilers. You need to give rust code which makes rust compiler throw Internal Compiler Error. You can use any nightly feature and items in std crate. Generate codes as strange as possible, and contains various structures and features. Infill the code directily."
-        # system_tokens = [im_start] + _system + \
-        #     tokenizer(system_msg).input_ids + [im_end] + nl_tokens
-        # user_tokens = [im_start] + _user + fim_prefix + tokenizer(code_prefix).input_ids + fim_suffix + tokenizer(
-        #     code_suffix).input_ids + fim_middle + [im_end] + nl_tokens
-        # assistant_tokens = [im_start] + _assistant + nl_tokens
-
-        # # prefix_tokens = tokenizer.encode(
-        # #     text=prefix, padding=True, truncation=True, add_special_tokens=True
-        # # )
-        # # prefix_len = len(prefix_tokens)
-        # prefix_len = len(system_tokens) + len(user_tokens) + \
-        #     len(assistant_tokens)
+        # im_start = tokenizer.im_start_id
+        # im_end = tokenizer.im_end_id
+        # nl_tokens = tokenizer('\n').input_ids
+        # _system = tokenizer('system').input_ids
+        # _user = tokenizer('user').input_ids
+        # _assistant = tokenizer('assistant').input_ids
+        # fim_prefix = tokenizer('<|fim_prefix|>').input_ids
+        # fim_suffix = tokenizer('<|fim_suffix|>').input_ids
+        # fim_middle = tokenizer('<|fim_middle|>').input_ids
+        # prefix = fim_prefix + tokenizer(code_prefix).input_ids + fim_suffix + tokenizer(
+        #     code_suffix).input_ids + fim_middle + nl_tokens
+        # prefix_len = len(prefix)
         # other_tokens = tokenizer.encode(
         #     text=code_middle, padding=True, truncation=True, add_special_tokens=True
         # )
         # other_tokens = other_tokens + [tokenizer.eos_token_id]
-        # # res = prefix_tokens + other_tokens
-        # res = system_tokens + user_tokens + assistant_tokens + other_tokens
+        # res = prefix + other_tokens
         # return (res, prefix_len)
-        prefix = fim_prefix + tokenizer(code_prefix).input_ids + fim_suffix + tokenizer(
-            code_suffix).input_ids + fim_middle + nl_tokens
-        prefix_len = len(prefix)
-        other_tokens = tokenizer.encode(
-            text=code_middle, padding=True, truncation=True, add_special_tokens=True
+        nl_tokens  = '\n'
+        fim_prefix = '<|fim_prefix|>'
+        fim_suffix = '<|fim_suffix|>'
+        fim_middle = '<|fim_middle|>'
+        prefix = fim_prefix + code_prefix + fim_suffix + code_suffix + fim_middle + nl_tokens
+        prefix_tokens = tokenizer(prefix, add_special_tokens=False)
+        prefix_len = len(prefix_tokens.input_ids)
+        resp_tokens = tokenizer(code_middle, add_special_tokens=False)
+        input_ids = prefix_tokens.input_ids + resp_tokens.input_ids + [tokenizer.pad_token_id]
+        attention_mask = (
+            prefix_tokens.attention_mask + resp_tokens.attention_mask + [1]
         )
-        other_tokens = other_tokens + [tokenizer.eos_token_id]
-        res = prefix + other_tokens
-        return (res, prefix_len)
+        labels = [-100] * prefix_len + resp_tokens.input_ids + [tokenizer.pad_token_id]
+        return (input_ids, prefix_len, attention_mask, labels)
 
     def __init__(self, input_dirs, tokenizer, args):
         TOKEN_MAX_LEN = 1024
@@ -154,30 +140,32 @@ class MyDataset(Dataset):
 
             code_split_point = random.randrange(1, len(code))
 
-            (tokens, prefix_len) = self.__gen_tokens(
+            (tokens, _, attention_mask, labels) = self.__gen_tokens(
                 tokenizer,
                 code_prefix=code[:code_split_point],
                 code_middle=code[code_split_point:],
                 code_suffix=""
             )
             if len(tokens) > TOKEN_MAX_LEN:
-                continue
-            labels = [-100] * prefix_len + tokens[prefix_len:]
-            datas.append((tokens, labels))
+                tokens = tokens[:TOKEN_MAX_LEN]
+                labels = labels[:TOKEN_MAX_LEN]
+                attention_mask = attention_mask[:TOKEN_MAX_LEN]
+            datas.append((tokens, attention_mask, labels))
 
             code_split_front = random.randrange(1, len(code) // 2)
             code_split_back = random.randrange(len(code) // 2, len(code))
 
-            (tokens, prefix_len) = self.__gen_tokens(
+            (tokens, _, attention_mask, labels) = self.__gen_tokens(
                 tokenizer,
                 code_prefix=code[:code_split_front],
                 code_middle=code[code_split_front:code_split_back],
                 code_suffix=code[:code_split_back]
             )
             if len(tokens) > TOKEN_MAX_LEN:
-                continue
-            labels = [-100] * prefix_len + tokens[prefix_len:]
-            datas.append((tokens, labels))
+                tokens = tokens[:TOKEN_MAX_LEN]
+                labels = labels[:TOKEN_MAX_LEN]
+                attention_mask = attention_mask[:TOKEN_MAX_LEN]
+            datas.append((tokens, attention_mask, labels))
 
         self.datas = datas
 
@@ -185,7 +173,12 @@ class MyDataset(Dataset):
         return len(self.datas)
 
     def __getitem__(self, idx):
-        return self.datas[idx]
+        data = self.datas[idx]
+        return {
+            "input_ids": data[0],
+            "attention_mask": data[1],
+            "labels": data[2]
+        }
 
 
 class DataCollator(object):
@@ -264,7 +257,8 @@ def self_train(model, tokenizer, dataset, device, args):
     model = model.to(device)
     model.train()
 
-    collator = DataCollator(tokenizer)
+    # collator = DataCollator(tokenizer)
+    collator = DataCollatorForSeq2Seq(tokenizer = tokenizer, model=model, padding=True)
     train_loader = DataLoader(train_dataset, collate_fn=collator,
                               batch_size=args.batch_size, shuffle=True, num_workers=0)
 
@@ -385,7 +379,7 @@ def trainer_train(model, tokenizer, dataset, device, args):
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=DataCollator(tokenizer),
+        data_collator=DataCollatorForSeq2Seq(tokenizer = tokenizer, model=model, padding=True),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,

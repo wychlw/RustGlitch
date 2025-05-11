@@ -12,6 +12,8 @@ const MAX_NESTED: usize = 30;
 const MAX_ANALYZE_DEPTH: usize = 200;
 const NEW_ICE_ADJ_RATE: f64 = 1.05;
 const DUP_ICE_ADJ_RATE: f64 = 0.95;
+const CHOOSE_ADJ_RATE: f64 = 0.98;
+const MIN_CHOOSE: f64 = 0.5;
 
 // Note: The base code is copied from syn::visit_mut::VisitMut
 // and modified automatically
@@ -273,13 +275,13 @@ macro_rules! do_work {
                     let store_place = match $self.nodeset.get_mut($nd_name) {
                         Some(v) => v,
                         None => {
-                            $self.nodeset.insert($nd_name.to_string(), IndexMap::new());
+                            $self.nodeset.insert($nd_name.to_string(), (IndexMap::new(), 0.));
                             $self.nodeset.get_mut($nd_name).unwrap()
                         }
                     };
                     let w = gen_weight!($nd_ty_store, $nd);
-                    $self.total_weight += w;
-                    store_place.insert(ast_store, w);
+                    store_place.1 += w;
+                    store_place.0.insert(ast_store, w);
                 }
                 WorkMode::Modify => {
                     if $self.nested >= MAX_NESTED {
@@ -291,27 +293,31 @@ macro_rules! do_work {
                     let store_place = match $self.nodeset.get_mut($nd_name) {
                         Some(v) => v,
                         None => {
-                            $self.nodeset.insert($nd_name.to_string(), IndexMap::new());
+                            $self.nodeset.insert($nd_name.to_string(), (IndexMap::new(), 0.));
                             $self.nodeset.get_mut($nd_name).unwrap()
                         }
                     };
-                    if store_place.is_empty() {
+                    if store_place.0.is_empty() {
                         break 'end_work;
                     }
-                    let w = glob_range(0. ..$self.total_weight);
+                    let w = glob_range(0. ..store_place.1);
                     // let ast_store = store_place.get_index(idx).unwrap();
                     let mut cur_w = 0.;
-                    let ast_store = store_place
-                        .iter()
+                    let ast_store = store_place.0
+                        .iter_mut()
                         .find(|(_, v)| {
-                            cur_w += *v;
+                            cur_w += **v;
                             cur_w >= w
-                        })
-                        .unwrap_or(
-                            store_place
-                                .last()
-                                .unwrap_or_else(|| panic!("No node found for {}", $nd_name)),
-                        );
+                        });
+                    let ast_store = match ast_store {
+                        Some(ast_store) => ast_store,
+                        None => {
+                            store_place.0
+                                .last_mut()
+                                .unwrap_or_else(|| panic!("No node found for syn::ABI"))
+                        }
+                    };
+        
                     let node = match ast_store.0 {
                         ASTStore::$nd_ty_store(expr) => expr,
                         _ => unreachable!(),
@@ -319,17 +325,22 @@ macro_rules! do_work {
                     let node = node.clone();
                     *$nd = node;
                     $self.nested += 1;
+                    let new_val = *ast_store.1 * CHOOSE_ADJ_RATE;
+                    if new_val > MIN_CHOOSE {
+                        store_place.1 -= (*ast_store.1 - new_val);
+                        *ast_store.1 = new_val;
+                    }
                 }
                 WorkMode::Adjust(dup) => {
                     let ast_store = ASTStore::$nd_ty_store($nd.clone());
                     let store_place = match $self.nodeset.get_mut($nd_name) {
                         Some(v) => v,
                         None => {
-                            $self.nodeset.insert($nd_name.to_string(), IndexMap::new());
+                            $self.nodeset.insert($nd_name.to_string(), (IndexMap::new(), 0.));
                             $self.nodeset.get_mut($nd_name).unwrap()
                         }
                     };
-                    let res = store_place.get_mut(&ast_store);
+                    let res = store_place.0.get_mut(&ast_store);
                     match res {
                         Some(x) => {
                             let adj = *x * {
@@ -339,7 +350,7 @@ macro_rules! do_work {
                                     NEW_ICE_ADJ_RATE
                                 }
                             };
-                            $self.total_weight -= (*x - adj);
+                            store_place.1 -= (*x - adj);
                             *x = adj;
                         }
                         None => {}
@@ -359,8 +370,7 @@ enum WorkMode {
 
 #[derive(Clone)]
 pub(crate) struct ASTMutator {
-    pub nodeset: HashMap<String, IndexMap<ASTStore, f64>>,
-    total_weight: f64,
+    pub nodeset: HashMap<String, (IndexMap<ASTStore, f64>, f64)>,
     work_mode: WorkMode,
     nested: usize,
     analyze_depth: usize,
@@ -372,7 +382,6 @@ impl ASTMutator {
     pub fn new() -> Self {
         Self {
             nodeset: HashMap::new(),
-            total_weight: 0.0,
             work_mode: WorkMode::Add,
             nested: 0,
             analyze_depth: 0,

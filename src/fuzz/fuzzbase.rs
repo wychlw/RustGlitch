@@ -16,7 +16,7 @@ use regex::Regex;
 use wait_timeout::ChildExt;
 use walkdir::WalkDir;
 
-use crate::{conf::Args, debug, fuzz::feature_list::FEATURES, warn};
+use crate::{conf::Args, debug, fuzz::feature_list::FEATURES, util::glob_range, warn};
 
 const TIMEOUT: u64 = 60; // seconds
 
@@ -173,6 +173,7 @@ impl Fuzzer for LoadFuzzer {
             self.idx = 0;
         }
         let code = self.codes[self.idx].clone();
+        // let code = self.codes[glob_range(0..self.codes.len())].clone();
         self.idx += 1;
         Ok(code)
     }

@@ -224,7 +224,7 @@ impl Job {
                 let mut flag = false;
                 for i in &code {
                     if flag {
-                        f.write_all(b"\n// <Break Here>\n")?;
+                        f.write_all(b"<|[Break Here]|>")?;
                     }
                     f.write_all(&i)?;
                     flag = true;
