@@ -5,7 +5,7 @@ use syn::visit_mut::VisitMut;
 
 use indexmap::IndexMap;
 
-use crate::util::glob_range;
+use crate::{util::glob_range, warn};
 
 const MUTATE_P: f64 = 0.1;
 const MAX_NESTED: usize = 30;

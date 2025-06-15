@@ -1,4 +1,4 @@
-use std::{error::Error, ffi::CStr, sync::{Arc, Mutex}};
+use std::{error::Error, ffi::CStr};
 
 use pyo3::{ffi::c_str, prelude::*};
 
