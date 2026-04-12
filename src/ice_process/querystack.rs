@@ -125,7 +125,7 @@ mod tests {
     use std::env::temp_dir;
 
     use crate::{
-        fuzz::fuzzbase::{DummyFuzzer, Fuzzer},
+        fuzz::fuzzbase::{Fuzzer, RustcFuzzer},
         util::gen_alnum,
     };
 
@@ -136,15 +136,16 @@ mod tests {
         let code = b"fn main() {break rust}";
         let tmp_file = temp_dir().join(gen_alnum(4));
         let tmp_out = temp_dir().join(gen_alnum(4));
-        let res = DummyFuzzer::compile(code, &tmp_file, &tmp_out, &[]).unwrap();
+        let res = RustcFuzzer::compile(code, &tmp_file, &tmp_out, &[]).unwrap();
         let res = match res.1 {
             FResult::InternalCompileError(x) => x,
             _ => unreachable!(),
         };
         let res = filter_query_stack(&res.stderr).unwrap();
-        let expected: Vec<Vec<u8>> = vec![b"typeck".to_vec(), b"analysis".to_vec()];
-
         let res = res.unwrap();
-        assert_eq!(res, expected);
+
+        // rustc versions may use `typeck` or `typeck_root` in the query stack.
+        assert!(res.iter().any(|s| s.as_slice() == b"analysis"));
+        assert!(res.iter().any(|s| s.starts_with(b"typeck")));
     }
 }

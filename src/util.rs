@@ -12,11 +12,13 @@ use rand::{
 use rand_chacha::ChaCha20Rng;
 
 #[doc(hidden)]
+#[allow(unused)]
 pub struct ForceSend<T> {
     inner: ManuallyDrop<T>,
 }
 
 impl<T> ForceSend<T> {
+    #[allow(dead_code)]
     pub fn new(inner: T) -> Self {
         Self {
             inner: ManuallyDrop::new(inner),
@@ -174,54 +176,12 @@ pub static __seed_weight_seed_holder: LazyLock<Mutex<Option<Vec<[u8; 32]>>>> =
 
 #[macro_export]
 macro_rules! register_ordered_rng {
-    ($weight: literal) => {
-        register_ordered_rng!(@ $weight, $weight);
-    };
-    (@ $weight: literal, $func: literal) => {
-        #[allow(non_snake_case)]
-        #[ctor::ctor]
-        fn ${concat("__seed_weight_reg_func_ctor_", $func)}() {
-            if let Ok(mut guard) = $crate::util::__seed_weight_holder.write() {
-                guard.push($weight.parse().unwrap());
-            }
-        }
-
-        #[allow(non_snake_case)]
-        pub fn ${concat("__seed_weight_reg_func_get_", $func)}() -> $crate::util::RNG {
-            let w: usize = $weight.parse().unwrap();
-
-            let pos = {
-                let guard = $crate::util::__seed_weight_holder.read().unwrap();
-                let mut v = guard.clone();
-                v.sort();
-                v.iter().position(|n| n == &w).unwrap()
-            };
-            let rng = {
-                let mut guard = $crate::util::__seed_weight_seed_holder.lock().unwrap();
-                if guard.is_none() {
-                    let mut v: Vec<[u8; 32]> = Vec::new();
-                    let len = $crate::util::__seed_weight_holder.read().unwrap().len();
-                    for _ in 0..len {
-                        let mut t: [u8; 32] = [0; 32];
-                        for i in 0..32 {
-                            t[i] = $crate::util::glob_next();
-                        }
-                        v.push(t);
-                    }
-                    guard.replace(v);
-                }
-                let seed = guard.as_ref().unwrap();
-                $crate::util::RNG::new(seed[pos])
-            };
-            rng
-
-        }
-    };
+    ($weight: literal) => {};
 }
 
 #[macro_export]
 macro_rules! get_ordered_rng {
     ($weight: literal) => {
-        ${concat("__seed_weight_reg_func_get_", $weight)}()
+        $crate::util::RNG::default()
     }
 }

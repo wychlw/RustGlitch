@@ -67,7 +67,7 @@ impl MaskFuzzer for BracketsMask {
                         };
                         let overlap_time_modifier = 1. / (overlap_time * 2 + 1) as f64;
                         let renew_p = REMOVE_P * codelen_modifier * overlap_time_modifier;
-                        if code_len <= 0 {
+                        if code_len == 0 {
                             continue;
                         }
                         if glob_range(0. ..1.) > renew_p {

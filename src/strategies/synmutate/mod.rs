@@ -63,7 +63,7 @@ impl Fuzzer for NodeMutater {
     fn new(conf: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
         let dirs = &conf.input;
         let mut codes = vec![];
-        let mut inner = Box::new(ASTMutator::new());
+        let mut inner = Box::new(ASTMutator::new(conf.synmutate_params()));
         inner.begin_add();
         for dir in dirs {
             for f in WalkDir::new(dir) {
@@ -142,13 +142,11 @@ impl Fuzzer for NodeMutater {
         panic::set_hook(Box::new(|_| {}));
         let code = catch_unwind(|| {
             let code = prettyplease::unparse(&code_f);
-            let code = code.into_bytes();
-            code
+            code.into_bytes()
         })
         .unwrap_or_else(|_| {
             let code = code_f.to_token_stream().to_string();
-            let code = code.into_bytes();
-            code
+            code.into_bytes()
         });
         panic::set_hook(default_hook);
         Ok(code)

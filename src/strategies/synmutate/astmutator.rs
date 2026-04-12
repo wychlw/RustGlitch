@@ -5,15 +5,8 @@ use syn::visit_mut::VisitMut;
 
 use indexmap::IndexMap;
 
-use crate::{util::glob_range, warn};
+use crate::conf::SynMutateParams;
 
-const MUTATE_P: f64 = 0.1;
-const MAX_NESTED: usize = 30;
-const MAX_ANALYZE_DEPTH: usize = 200;
-const NEW_ICE_ADJ_RATE: f64 = 1.05;
-const DUP_ICE_ADJ_RATE: f64 = 0.95;
-const CHOOSE_ADJ_RATE: f64 = 0.98;
-const MIN_CHOOSE: f64 = 0.5;
 
 // Note: The base code is copied from syn::visit_mut::VisitMut
 // and modified automatically
@@ -262,7 +255,7 @@ macro_rules! do_work {
             if SKIPS.contains(&$nd_name) {
                 break 'end_work;
             }
-            if $self.analyze_depth >= MAX_ANALYZE_DEPTH {
+            if $self.analyze_depth >= $self.params.max_analyze_depth {
                 // Some case intentionally make the compiler stack overflow
                 // So we need to limit the analyze depth
                 return;
@@ -284,10 +277,10 @@ macro_rules! do_work {
                     store_place.0.insert(ast_store, w);
                 }
                 WorkMode::Modify => {
-                    if $self.nested >= MAX_NESTED {
+                    if $self.nested >= $self.params.max_nested {
                         break 'end_work;
                     }
-                    if glob_range(0. ..1.) > MUTATE_P {
+                    if $crate::util::glob_range(0. ..1.) > $self.params.mutate_p {
                         break 'end_work;
                     }
                     let store_place = match $self.nodeset.get_mut($nd_name) {
@@ -300,7 +293,7 @@ macro_rules! do_work {
                     if store_place.0.is_empty() {
                         break 'end_work;
                     }
-                    let w = glob_range(0. ..store_place.1);
+                    let w = $crate::util::glob_range(0. ..store_place.1);
                     // let ast_store = store_place.get_index(idx).unwrap();
                     let mut cur_w = 0.;
                     let ast_store = store_place.0
@@ -325,8 +318,8 @@ macro_rules! do_work {
                     let node = node.clone();
                     *$nd = node;
                     $self.nested += 1;
-                    let new_val = *ast_store.1 * CHOOSE_ADJ_RATE;
-                    if new_val > MIN_CHOOSE {
+                    let new_val = *ast_store.1 * $self.params.choose_adj_rate;
+                    if new_val > $self.params.min_choose {
                         store_place.1 -= (*ast_store.1 - new_val);
                         *ast_store.1 = new_val;
                     }
@@ -345,9 +338,9 @@ macro_rules! do_work {
                         Some(x) => {
                             let adj = *x * {
                                 if dup {
-                                    DUP_ICE_ADJ_RATE
+                                    $self.params.dup_ice_adj_rate
                                 } else {
-                                    NEW_ICE_ADJ_RATE
+                                    $self.params.new_ice_adj_rate
                                 }
                             };
                             store_place.1 -= (*x - adj);
@@ -374,17 +367,19 @@ pub(crate) struct ASTMutator {
     work_mode: WorkMode,
     nested: usize,
     analyze_depth: usize,
+    params: SynMutateParams,
 }
 unsafe impl Send for ASTMutator {} // Data won't be cloned outside of the thread,
 unsafe impl Sync for ASTMutator {} // at least I think so?
 
 impl ASTMutator {
-    pub fn new() -> Self {
+    pub fn new(params: SynMutateParams) -> Self {
         Self {
             nodeset: HashMap::new(),
             work_mode: WorkMode::Add,
             nested: 0,
             analyze_depth: 0,
+            params,
         }
     }
     pub fn begin_add(&mut self) {

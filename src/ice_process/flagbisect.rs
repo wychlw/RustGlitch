@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Debug, path::Path};
 
-use crate::fuzz::fuzzbase::{FResult, Fuzzer};
+use crate::fuzz::fuzzbase::{FResult, Fuzzer, fuzzer_compile_with_toolchain};
 
 fn bruce_filter<T, F>(mut set: Vec<T>, test_fn: &F) -> Vec<T>
 where
@@ -72,6 +72,32 @@ pub fn filter_flags<T: Fuzzer>(
     };
     let set = quick_xplain(flags, &f, vec![]);
     let set = bruce_filter(set, &f); // Optional, just in-case
+    Ok(set)
+}
+
+pub fn filter_flags_with_toolchain<T: Fuzzer>(
+    toolchain: Option<&str>,
+    flags: Vec<String>,
+    code: &[u8],
+    output_source: &Path,
+    output_bin: &Path,
+    extra_args: &[&str],
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let f = |flags: &[String]| -> bool {
+        let features = flags.iter().map(|s| s.as_str()).collect::<Vec<_>>();
+        let (_, res) = fuzzer_compile_with_toolchain::<T>(
+            toolchain,
+            code,
+            output_source,
+            output_bin,
+            extra_args,
+            &features,
+        )
+        .unwrap();
+        matches!(res, FResult::InternalCompileError(..))
+    };
+    let set = quick_xplain(flags, &f, vec![]);
+    let set = bruce_filter(set, &f);
     Ok(set)
 }
 

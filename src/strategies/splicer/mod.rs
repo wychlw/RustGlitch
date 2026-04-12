@@ -124,7 +124,7 @@ fn parse_dir(p: &Vec<PathBuf>) -> Result<TreeHolder, Box<dyn Error>> {
     Ok(res)
 }
 
-fn do_splicer(trees: &TreeHolder, seed: Option<u64>) -> Result<Splicer, Box<dyn Error>> {
+fn do_splicer(trees: &TreeHolder, seed: Option<u64>) -> Result<Splicer<'_>, Box<dyn Error>> {
     let seed = match seed {
         Some(s) => s,
         None => glob_next(),
@@ -153,12 +153,11 @@ struct SplicerFuzzerHolder {
 impl Clone for SplicerFuzzerHolder {
     fn clone(&self) -> Self {
         let trees = self.borrow_trees().clone();
-        let res = SplicerFuzzerHolderBuilder {
+        SplicerFuzzerHolderBuilder {
             trees,
             splicer_builder: |t| do_splicer(t, Some(glob_next())).unwrap(),
         }
-        .build();
-        res
+        .build()
     }
 }
 
