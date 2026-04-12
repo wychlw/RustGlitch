@@ -52,7 +52,7 @@ impl LlamaCppFuzzer {
         let mut batch = LlamaBatch::new(512, 1);
 
         let last_index = tokens.len() as i32 - 1;
-        for (i, token) in (0i32..).zip(tokens.into_iter()) {
+        for (i, token) in (0i32..).zip(tokens) {
             let is_last = i == last_index;
             batch.add(token, i, &[0], is_last)?;
         }

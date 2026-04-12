@@ -5,7 +5,6 @@ use std::{
     ffi::OsStr,
     fmt::Display,
     fs,
-    io::Read,
     path::Path,
     process::{Command, Output, Stdio},
     time::Duration,
@@ -16,9 +15,9 @@ use regex::Regex;
 use wait_timeout::ChildExt;
 use walkdir::WalkDir;
 
-use crate::{conf::Args, debug, fuzz::feature_list::FEATURES, util::glob_range, warn};
+use crate::{conf::Args, debug, warn};
 
-const TIMEOUT: u64 = 60; // seconds
+const COMPILE_TIMEOUT_SEC: u64 = 60;
 
 #[derive(Debug)]
 pub enum FResult {
@@ -40,6 +39,7 @@ impl Display for FResult {
     }
 }
 pub trait Fuzzer: Send + Sync + DynClone + Any {
+    #[allow(clippy::new_ret_no_self)]
     fn new(conf: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>>
     where
         Self: Sized;
@@ -64,7 +64,7 @@ pub trait Fuzzer: Send + Sync + DynClone + Any {
     where
         Self: Sized,
     {
-        Self::compile_with_features(code, output_source, output_bin, extra_args, &FEATURES)
+        Self::compile_with_features(code, output_source, output_bin, extra_args, &[])
     }
     fn compile_with_features(
         code: &[u8],
@@ -111,11 +111,12 @@ pub trait MaskFuzzer: Fuzzer {
     }
 }
 
+/// A do-nothing fuzzer used for dump/placeholder stages.
 #[derive(Default, Clone)]
-pub struct DummyFuzzer {}
-impl Fuzzer for DummyFuzzer {
+pub struct NoopFuzzer;
+impl Fuzzer for NoopFuzzer {
     fn new(_: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
-        let res = Self {};
+        let res = Self;
         let res = Box::new(res);
         Ok(res)
     }
@@ -123,14 +124,14 @@ impl Fuzzer for DummyFuzzer {
         Ok(vec![])
     }
 }
-impl MaskFuzzer for DummyFuzzer {
+impl MaskFuzzer for NoopFuzzer {
     fn mask(&mut self, code: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
         let code = code.to_vec();
         let mask = vec![];
         Ok((code, mask))
     }
 }
-impl InfillFuzzer for DummyFuzzer {
+impl InfillFuzzer for NoopFuzzer {
     fn infill(
         &mut self,
         code_prefix: &[u8],
@@ -140,6 +141,22 @@ impl InfillFuzzer for DummyFuzzer {
         Ok(code)
     }
 }
+
+/// Semantic fuzzer for the `rustc:fuzz` stage (compile/ICE detection).
+/// Generation is unused by the runtime, but the type is helpful for readability.
+#[derive(Default, Clone)]
+pub struct RustcFuzzer;
+impl Fuzzer for RustcFuzzer {
+    fn new(_: &Args) -> Result<Box<dyn Fuzzer>, Box<dyn Error>> {
+        Ok(Box::new(Self))
+    }
+    fn generate(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
+        Ok(vec![])
+    }
+}
+
+/// Back-compat alias: old name was used as a placeholder fuzzer.
+pub type DummyFuzzer = NoopFuzzer;
 
 #[derive(Clone)]
 pub struct LoadFuzzer {
@@ -197,85 +214,68 @@ pub fn fuzzer_compile<T: Fuzzer>(
     extra_args: &[&str],
     features: &[&str],
 ) -> Result<(Vec<String>, FResult), Box<dyn Error>> {
-    // (Args, Result)
-    {
-        let code = code_mask_feature(code)?;
-        let tmp_file = temp_dir().join(output_source);
-        T::dump(&code, &tmp_file)?;
-        let args = [
-            tmp_file.to_str().unwrap().to_string(),
-            "-o".to_string(),
-            output_bin.to_str().unwrap().to_string(),
-        ];
-        let args: Vec<String> = args
-            .into_iter()
-            .chain(extra_args.iter().map(|s| s.to_string()))
-            .collect();
-        let extra_args: Vec<String> = features
-            .iter()
-            .map(|s| format!("-Zcrate-attr=feature({s})"))
-            .collect();
-        let args: Vec<String> = args.into_iter().chain(extra_args).collect();
-        let mut cmd = Command::new("rustc");
-        // cmd.arg("+stage2");
-        cmd.env("RUST_BACKTRACE", "1");
-        cmd.env("RUSTC_ICE", "0");
-        cmd.args(args.clone());
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+    fuzzer_compile_with_toolchain::<T>(None, code, output_source, output_bin, extra_args, features)
+}
 
-        // let mut child = cmd.spawn()?;
-        // let timeout = Duration::from_secs(TIMEOUT);
-        // let status = child.wait_timeout(timeout)?;
-        // match status {
-        //     Some(status) => {
-        //         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-        //         match child.stdout {
-        //             Some(mut s) => {
-        //                 s.read_to_end(&mut stdout)?;
-        //             }
-        //             None => {}
-        //         }
-        //         match child.stderr {
-        //             Some(mut s) => {
-        //                 s.read_to_end(&mut stderr)?;
-        //             }
-        //             None => {}
-        //         }
-        //         let code = status.code().ok_or("No code")?;
-        //         debug!("Code: {}", code);
-        //         let output = Output {
-        //             status,
-        //             stdout,
-        //             stderr,
-        //         };
-        //         if output.status.success() {
-        //             return Ok((args, FResult::CompileSuccess(output)));
-        //         }
-        //         if code == 1 {
-        //             return Ok((args, FResult::CompileError(output)));
-        //         }
-        //         if code == 101 {
-        //             return Ok((args, FResult::InternalCompileError(output)));
-        //         }
-        //         return Ok((args, FResult::RunError));
-        //     }
-        //     None => {
-        //         child.kill()?;
-        //         return Ok((args, FResult::HangOnCompile));
-        //     }
-        // }
+pub fn fuzzer_compile_with_toolchain<T: Fuzzer>(
+    toolchain: Option<&str>,
+    code: &[u8],
+    output_source: &Path,
+    output_bin: &Path,
+    extra_args: &[&str],
+    features: &[&str],
+) -> Result<(Vec<String>, FResult), Box<dyn Error>> {
+    let code = code_mask_feature(code)?;
+    let tmp_file = temp_dir().join(output_source);
+    T::dump(&code, &tmp_file)?;
 
-        let status = cmd.output()?;
-        let code = status.status.code().ok_or("No code")?;
-        debug!("Code: {}", code);
-        if status.status.success() {
-            return Ok((args, FResult::CompileSuccess(status)));
+    let args = [
+        tmp_file.to_str().unwrap().to_string(),
+        "-o".to_string(),
+        output_bin.to_str().unwrap().to_string(),
+    ];
+    let mut args: Vec<String> = args
+        .into_iter()
+        .chain(extra_args.iter().map(|s| s.to_string()))
+        .collect();
+
+    let extra_args: Vec<String> = features
+        .iter()
+        .map(|s| format!("-Zcrate-attr=feature({s})"))
+        .collect();
+    args.extend(extra_args);
+
+    if let Some(tc) = toolchain.map(str::trim).filter(|s| !s.is_empty()) {
+        args.insert(0, format!("+{tc}"));
+    }
+
+    let mut cmd = Command::new("rustc");
+    cmd.env("RUST_BACKTRACE", "1");
+    cmd.env("RUSTC_ICE", "0");
+    cmd.args(args.clone());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn()?;
+    let timeout = Duration::from_secs(COMPILE_TIMEOUT_SEC);
+    match child.wait_timeout(timeout)? {
+        Some(_) => {
+            let output: Output = child.wait_with_output()?;
+            let code = output.status.code().ok_or("No code")?;
+            debug!("Code: {}", code);
+            if output.status.success() {
+                return Ok((args, FResult::CompileSuccess(output)));
+            }
+            if code == 1 {
+                return Ok((args, FResult::CompileError(output)));
+            }
+            Ok((args, FResult::InternalCompileError(output)))
         }
-        if code == 1 {
-            return Ok((args, FResult::CompileError(status)));
+        None => {
+            child.kill()?;
+            let _ = child.wait();
+            Ok((args, FResult::HangOnCompile))
         }
-        Ok((args, FResult::InternalCompileError(status)))
     }
 }
 pub fn fuzzer_dump(code: &[u8], output: &Path) -> Result<(), Box<dyn Error>> {

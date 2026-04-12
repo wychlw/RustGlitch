@@ -77,7 +77,7 @@ impl ICEFilter for PanicFuncFilter {
         let f = read_to_string(p)?;
         let datas: FilterData = serde_json::from_str(&f)?;
         debug!("PanicFunc importing panic filters: {}", datas.len());
-        self.existed.extend(datas.into_iter());
+        self.existed.extend(datas);
         Ok(())
     }
     fn export(&self, args: &Args) -> Result<(), Box<dyn Error>> {
@@ -90,30 +90,14 @@ impl ICEFilter for PanicFuncFilter {
 
 #[cfg(test)]
 mod tests {
-    use std::env::temp_dir;
-
-    use crate::{
-        fuzz::fuzzbase::{DummyFuzzer, Fuzzer},
-        util::gen_alnum,
-    };
-
     use super::*;
 
     #[test]
     fn test_filter_panic_func() {
-        let code = b"fn main() {break rust}";
-        let tmp_file = temp_dir().join(gen_alnum(4));
-        let tmp_out = temp_dir().join(gen_alnum(4));
-        let res = DummyFuzzer::compile(code, &tmp_file, &tmp_out, &[]).unwrap();
-        let res = match res.1 {
-            FResult::InternalCompileError(x) => x,
-            _ => unreachable!(),
-        };
-        let res = filter_panic_file(&res.stderr).unwrap();
-
-        let expected = b"compiler/rustc_hir_typeck/src/lib.rs:528:10".to_vec();
-
-        let res = res.unwrap();
-        assert_eq!(res, expected);
+        // This should not depend on the local rustc version producing an ICE.
+        // We only test the stderr parsing logic here.
+        let stderr = b"some prelude\nthread 'rustc' panicked at compiler/foo.rs:1:2:\nmore\nthread 'rustc' panicked at compiler/rustc_hir_typeck/src/lib.rs:528:10:\n";
+        let res = filter_panic_file(stderr).unwrap().unwrap();
+        assert_eq!(res, b"compiler/rustc_hir_typeck/src/lib.rs:528:10".to_vec());
     }
 }

@@ -9,3 +9,6 @@
 #datas.tar.xz
 .tool-versions
 /ppt
+/test
+/out
+/.cargo

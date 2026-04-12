@@ -1,4 +1,8 @@
 {
 
-    "latex-workshop.latex.recipe.default": "No Build"
+    "latex-workshop.latex.recipe.default": "No Build",
+    "chat.tools.terminal.autoApprove": {
+        "cargo check": true,
+        "cargo": true
+    }
 }
