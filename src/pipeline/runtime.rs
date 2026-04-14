@@ -178,6 +178,7 @@ struct PipelineState {
     code: Vec<Vec<u8>>,
     dump_plan: Option<DumpPlan>,
     dump_plan_written: usize,
+    dropped: bool,
 }
 impl PipelineState {
     fn new() -> Self {
@@ -185,6 +186,7 @@ impl PipelineState {
             code: Vec::new(),
             dump_plan: None,
             dump_plan_written: 0,
+            dropped: false,
         }
     }
 }
@@ -348,8 +350,13 @@ impl Job {
 
                 state.dump_plan = None;
                 state.dump_plan_written = 0;
+                state.dropped = false;
 
                 if matches!(&compile_res.1, FResult::CompileSuccess(..)) {
+                    if !Self::should_keep(args, keep_override, ResultKind::Success) {
+                        state.dropped = true;
+                        return Ok(JobCB::Null);
+                    }
                     let plan = DumpPlan {
                         kind: ResultKind::Success,
                         prefix: "success".to_string(),
@@ -359,13 +366,17 @@ impl Job {
                     };
                     if has_dump_job {
                         state.dump_plan = Some(plan);
-                    } else if Self::should_keep(args, keep_override, ResultKind::Success) {
+                    } else {
                         Self::dump_result(args, control, &state.code[0], idx, &plan)?;
                     }
                     return Ok(JobCB::Null);
                 }
 
                 if matches!(&compile_res.1, FResult::CompileError(..)) {
+                    if !Self::should_keep(args, keep_override, ResultKind::CompileError) {
+                        state.dropped = true;
+                        return Ok(JobCB::Null);
+                    }
                     let plan = DumpPlan {
                         kind: ResultKind::CompileError,
                         prefix: "compile_error".to_string(),
@@ -375,7 +386,7 @@ impl Job {
                     };
                     if has_dump_job {
                         state.dump_plan = Some(plan);
-                    } else if Self::should_keep(args, keep_override, ResultKind::CompileError) {
+                    } else {
                         Self::dump_result(args, control, &state.code[0], idx, &plan)?;
                     }
                     return Ok(JobCB::Null);
@@ -390,6 +401,11 @@ impl Job {
                 if matches!(&compile_res.1, FResult::HangOnCompile) {
                     if args.skip_hang {
                         info!("\t\tHang: Skip hang on compile");
+                        state.dropped = true;
+                        return Ok(JobCB::Null);
+                    }
+                    if !Self::should_keep(args, keep_override, ResultKind::Hang) {
+                        state.dropped = true;
                         return Ok(JobCB::Null);
                     }
                     let plan = DumpPlan {
@@ -401,7 +417,7 @@ impl Job {
                     };
                     if has_dump_job {
                         state.dump_plan = Some(plan);
-                    } else if Self::should_keep(args, keep_override, ResultKind::Hang) {
+                    } else {
                         Self::dump_result(args, control, &state.code[0], idx, &plan)?;
                     }
                     return Ok(JobCB::InformICE(false));
@@ -417,6 +433,7 @@ impl Job {
                 }
                 if filter_pass == 0 {
                     info!("\t\tICE already exists, filtering out");
+                    state.dropped = true;
                     let plan = DumpPlan {
                         kind: ResultKind::Ice,
                         prefix: "ice".to_string(),
@@ -430,6 +447,11 @@ impl Job {
                     return Ok(JobCB::InformICE(true));
                 }
                 info!("\t\tICE: New ICE found");
+
+                if !Self::should_keep(args, keep_override, ResultKind::Ice) {
+                    state.dropped = true;
+                    return Ok(JobCB::InformICE(false));
+                }
 
                 let mut plan = DumpPlan {
                     kind: ResultKind::Ice,
@@ -464,7 +486,7 @@ impl Job {
                 }
                 if has_dump_job {
                     state.dump_plan = Some(plan);
-                } else if Self::should_keep(args, keep_override, ResultKind::Ice) {
+                } else {
                     Self::dump_result(args, control, &state.code[0], idx, &plan)?;
                 }
                 return Ok(JobCB::InformICE(false));
@@ -619,6 +641,9 @@ impl JobHolder {
         let mut state = PipelineState::new();
         let mut filters = self.effective_filters();
         for (sidx, job) in self.jobs.iter().enumerate() {
+            if state.dropped {
+                break;
+            }
             let cb = job.do_once(
                 args,
                 control,
