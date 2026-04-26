@@ -1,4 +1,5 @@
 #include <clang/Frontend/FrontendAction.h>
+#include <clang/Frontend/CompilerInstance.h>
 #include <fstream>
 #include <sstream>
 
